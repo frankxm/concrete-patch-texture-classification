@@ -142,7 +142,26 @@ The pretrained models used in this repository can be downloaded from:
 
 
 ## Trained Models
-The pretrained models used in this repository can be downloaded from:  
-[**Crossvalidation in subdataset1 and subdataset3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)
 
-[**Crossvalidation in subdataset2 and subdataset3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)
+The trained models in this repository can be downloaded from:
+
+- [**Cross-validation on Sub-dataset 1 and Sub-dataset 3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)  
+  **Sub-dataset 1:** Original annotated texture windows  
+  - 111 labeled texture windows (width 200) extracted from 24 raw images  
+  - Classes: Fluid, Good, Dry, Tearing  
+  - 5-fold cross-validation  
+  - Labels: `texture_windows-labels.csv`  
+  **Sub-dataset 3:** Synthetic texture windows (StyleGAN3 generated)  
+  - 1200 images per class (Fluid, Good, Dry, Tearing)  
+  - Labels: `texture_windows-labels(111+stylegan3).csv`  
+
+- [**Cross-validation on Sub-dataset 2 and Sub-dataset 3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)  
+  **Sub-dataset 2:** Extended expert-annotated texture windows  
+  - 426 labeled texture windows (width 200) extracted from 24 raw images  
+  - Classes: Fluid, Good, Dry, Tearing, Crushed (Écrasé)  
+  - 5-fold cross-validation  
+  - Labels: `patch_labels(426extension).csv`  
+  **Sub-dataset 3:** Synthetic texture windows (StyleGAN3 generated)  
+  - 1200 images per class (Fluid, Good, Dry, Tearing, Crushed)  
+  - Labels: `patch_labels(426extension+stylegan3).csv`  
+
