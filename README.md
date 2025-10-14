@@ -208,7 +208,7 @@ The pretrained models used in this repository can be downloaded from:
 
 ## Trained Models
 
-The pretrained backbones (e.g., ResNet, EfficientNet, InceptionResNetV2, etc.) were initialized with weights trained on ImageNet, and subsequently fine-tuned on our texture datasets to adapt to the specific characteristics of 3D-printed concrete layer textures.
+The pretrained backbones (Efficientformerl3, InceptionResNetV2, VGG19.) were initialized with weights trained on ImageNet, and subsequently fine-tuned on our texture datasets to adapt to the specific characteristics of 3D-printed concrete layer textures.
 
 Two main experimental benchmarks were constructed to evaluate the models:
 
@@ -220,7 +220,7 @@ This benchmark combines extended real texture samples (Sub-dataset 2). **Extende
 
 3. **Synthetic patches generated with StyleGAN3(Sub-dataset 3)** are used as a data augmentation methode during construction of two benchmarks above, covering all five classes.(Fluid,Good,Dry,Tearing,Crushed)
 
-The pretrained and fine-tuned models in this repository can be downloaded from:
+The final fine-tuned models of 3dcp can be downloaded from:
 
 - [**Cross-validation on Sub-dataset 1 and Sub-dataset 3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)  
   **Sub-dataset 1:** Original annotated texture windows  
