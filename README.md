@@ -242,3 +242,21 @@ The final fine-tuned models of 3dcp can be downloaded from:
   - 1200 images per class (Fluid, Good, Dry, Tearing, Crushed)  
   - Labels: `patch_labels(426extension+stylegan3).csv`  
 
+
+
+
+## Generate an image using pkl weights in subdataset3.
+[Download stylegan3 code](https://github.com/NVlabs/stylegan3.git)
+```bash
+python gen_images.py --outdir=out/fluid --trunc=1 --seeds=1-1200  --network=./model_final/fluidresume2721.pkl
+python gen_images.py --outdir=out/good --trunc=1 --seeds=1-1200  --network=./model_final/goodresume2822.pkl
+python gen_images.py --outdir=out/dry --trunc=1 --seeds=1-1200  --network=./model_final/dryresume1814.pkl
+python gen_images.py --outdir=out/tearing --trunc=1 --seeds=1-1200  --network=./model_final/tearingresume504.pkl
+python gen_images.py --outdir=out/ecrase --trunc=1 --seeds=1-1200 --class=4 --network=./network-snapshot-001501.pkl
+```
+### Parameters Explanation
+- `--outdir` | Output directory path where generated images will be saved.|
+- `--trunc` | Truncation value. Controls image diversity and fidelity: smaller values(0.5) produce more stable but less diverse images; larger values(2) increase variation but can reduce realism.(1 as defaut) |
+- `--seeds` | Random seed or range of seeds to control the random latent vectors used for generation. Example: `1-1200` means seeds from 1 to 1200 will generate 1200 images. |
+- `--network` | Path to the pretrained `.pkl` weight file. Each `.pkl` corresponds to a trained generator for a specific dataset or class.|
+- `--class` *(optional)* | Used for conditional models. Specifies which class label to generate. Example: `--class=4` means generate images of class index 4, which means class "ecrase". The index of five classes are (fluid,good,dry,tearing,ecrase). The first four models are dedicated to generating 1 specific class(fluid,good,dry,tearing), but network-snapshot-001501.pkl can generate 5 classes. You can specify a specific class by `--class=4`, which is generally used for class "ecrase"|
