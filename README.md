@@ -65,8 +65,8 @@ These parameters **must be set for step:prediction/evaluation**:
 - **tb_path**: TensorBoard events folder (optional).  
 - **log_path**: Execution logs folder (optional).
 - **norm_params**: Normalization parameters file for models which need images as input.
-- **mean_features**= Normalization parameters file for models which need texture descripteurs as input
-- **std_features**= Normalization parameters file for models which need texture descripteurs as input
+- **mean_features**= Normalization parameters file for models which need texture descripteur vector as input
+- **std_features**= Normalization parameters file for models which need texture descripteur vector as input
 
 ### Data Paths (Required for Both Training and Testing)
 
