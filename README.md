@@ -1,6 +1,6 @@
 # Concrete Patch Classification
 
-This repository contains code for **texture classification of 3D concrete printing patches**, connecting to public dataset in [zenodo]() , corresponding to the dataset described below.
+This repository contains code for **texture classification of 3D concrete printing patches**, connecting to public dataset in [zenodo](https://doi.org/10.5281/zenodo.17078771) , corresponding to the dataset described below.
 
 ## Training Configuration
 
