@@ -138,8 +138,8 @@ These parameters **must be set for step:prediction,evaluation**:
 
   [Paths]
   norm_params = ./test/norm_params.txt
-  mean_features: ./test/mean_features_fold_1.npy
-  std_features: ./test/std_features_fold_1.npy,
+  mean_features= ./test/mean_features_fold_1.npy
+  std_features= ./test/std_features_fold_1.npy,
   model_path1=./test/model_epoch_004_loss_1.2211.pth	
   model_path2=./test/model_epoch_009_loss_1.2468.pth	
   model_path3=./test/model_epoch_014_loss_1.2547.pth
