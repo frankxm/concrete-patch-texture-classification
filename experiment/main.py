@@ -57,7 +57,6 @@ def parse_configurations(config_file: Path):
         'num_workers': get_option('General', 'num_workers', 0, int),
         'batch_size': get_option('General', 'batch_size', 4, int),
         'desired_batchsize': get_option('General', 'desired_batchsize', 4, int),
-        'bin_size': get_option('General', 'bin_size', 20, int),
         'learning_rate': get_option('General', 'learning_rate', 5e-3, float),
         'use_amp': get_bool('General', 'use_amp', False),
         'model_path': get_path('Paths', 'model_path'),
