@@ -61,6 +61,13 @@ def parse_configurations(config_file: Path):
         'learning_rate': get_option('General', 'learning_rate', 5e-3, float),
         'use_amp': get_bool('General', 'use_amp', False),
         'model_path': get_path('Paths', 'model_path'),
+        'model_paths': [
+            get_path('Paths', 'model_path1'),
+            get_path('Paths', 'model_path2'),
+            get_path('Paths', 'model_path3'),
+            get_path('Paths', 'model_path4'),
+            get_path('Paths', 'model_path5'),
+        ],
         'prediction_path': get_path('Paths', 'prediction_path', 'prediction'),
         'evaluation_path': get_path('Paths', 'evaluation_path', 'evaluation'),
         'tb_path': get_path('Paths', 'tb_path', 'events'),
@@ -80,7 +87,10 @@ def parse_configurations(config_file: Path):
         'images_generees_path': get_path('Paths', 'images_generees_path'),
         'mean_features': get_path('Paths', 'mean_features'),
         'std_features': get_path('Paths', 'std_features'),
+        'best_features': get_path('Paths', 'best_features'),
         'num_genere': get_option('General', 'num_genere', ' 0,0,0,0,0', lambda v: v.split(',')),
+        'visualization':get_bool('General', 'visualization', False),
+        'filtered_label_evaluation': get_option('General', 'filtered_label_evaluation', None, int),
     }
 
     log_path = config_data['log_path'] /config_data['experiment_name']

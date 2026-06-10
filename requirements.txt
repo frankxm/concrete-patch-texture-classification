@@ -66,9 +66,9 @@ thop==0.1.1.post2209072238
 threadpoolctl==3.1.0
 tifffile==2021.11.2
 timm==0.4.12
-torch @ file:///C:/Users/86139/Downloads/torch-1.13.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=c2493a30d0c5ff426fad3d60d9d535c24678b45cc4ce1cffca0f1044d408cb96
-torchaudio @ file:///C:/Users/86139/Downloads/torchaudio-0.13.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=7d862e725b4a511f3e1477820f5a7715506a64e394c5833241cca6f8b07cae6f
-torchvision @ file:///C:/Users/86139/Downloads/torchvision-0.14.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=5debbbda105c5e0ce8d0b40718c435a88e61b2c2c64d3d0d80ca89e4e9b3f6c7
+#torch @ file:///C:/Users/86139/Downloads/torch-1.13.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=c2493a30d0c5ff426fad3d60d9d535c24678b45cc4ce1cffca0f1044d408cb96
+#torchaudio @ file:///C:/Users/86139/Downloads/torchaudio-0.13.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=7d862e725b4a511f3e1477820f5a7715506a64e394c5833241cca6f8b07cae6f
+#torchvision @ file:///C:/Users/86139/Downloads/torchvision-0.14.1%2Bcu116-cp37-cp37m-win_amd64.whl#sha256=5debbbda105c5e0ce8d0b40718c435a88e61b2c2c64d3d0d80ca89e4e9b3f6c7
 tqdm==4.67.1
 typing-extensions==3.7.4.3
 urllib3==2.0.7

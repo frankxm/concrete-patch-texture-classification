@@ -18,7 +18,7 @@ sys.path.append(project_root)
 from models.inceptionresnetv2 import InceptionResNetV2
 from models.efficientformer import efficientformer_l3
 from models.custom_vgg19 import CustomVGG19
-from models.texture_model import ConvClassifier
+from models.texture_model import ConvClassifier,ConvTextureEncoder_ablation
 from models.transunet import get_r50_b16_config,VisionTransformer
 from models.midfusionmodel import MidFusionModel,ConvTextureEncoder
 logger = logging.getLogger(__name__)
@@ -52,7 +52,8 @@ def get_models(model_name,no_of_classes,use_amp):
     elif model_name=='inceptionresnetv2':
         net=InceptionResNetV2(num_classes=no_of_classes, use_amp=use_amp)
     elif model_name=='texture_model':
-        net=ConvClassifier(num_classes=no_of_classes, use_amp=use_amp)
+        net = ConvTextureEncoder_ablation(num_classes=no_of_classes, use_amp=use_amp)
+        # net=ConvClassifier(num_classes=no_of_classes, use_amp=use_amp)
     elif model_name=='customtransunet':
         config_vit =get_r50_b16_config()
         config_vit.n_classes = no_of_classes
@@ -61,6 +62,7 @@ def get_models(model_name,no_of_classes,use_amp):
         net1 = efficientformer_l3(num_classes=no_of_classes, use_amp=use_amp)
         net2 = ConvTextureEncoder(use_amp=use_amp)
         net=MidFusionModel(net1,net2,num_classes=no_of_classes, use_amp=use_amp)
+
 
     logger.info(f"Creating model: {model_name}")
     return net
@@ -93,10 +95,11 @@ def restore_model(
         # pth权重统一处理
         if os.path.basename(model_path).lower().endswith('.pth'):
             if torch.cuda.is_available():
-                checkpoint = torch.load( model_path)
+                # load默认只能加载tensor / state_dict / 基础类型，如果保存torch.save的是模型对象(pickle)需要weights_only=False
+                checkpoint = torch.load( model_path,weights_only=False)
 
             else:
-                checkpoint = torch.load( model_path, map_location=torch.device("cpu") )
+                checkpoint = torch.load( model_path, map_location=torch.device("cpu") ,weights_only=False)
         else:
             checkpoint=None
 
@@ -180,10 +183,13 @@ def restore_model(
                 model_to_freeze = net.module if isinstance(net, torch.nn.DataParallel) else net
 
                 # inceptionresnet1
-                # 冻结前面层
+                # 1. 先全部冻结
                 for param in model_to_freeze.parameters():
                     param.requires_grad = False
-                # 解冻分类层
+                # 2. 解冻 conv2d_7b
+                for param in model_to_freeze.conv2d_7b.parameters():
+                    param.requires_grad = True
+                # 3. 解冻最后分类层
                 for param in model_to_freeze.last_linear.parameters():
                     param.requires_grad = True
             elif model_name=='customvgg19':

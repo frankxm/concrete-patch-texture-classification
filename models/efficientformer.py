@@ -6,16 +6,22 @@ import copy
 import torch
 import torch.nn as nn
 
-from typing import Dict
 import itertools
 
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from timm.layers import DropPath, trunc_normal_
+# from timm.models.layers import DropPath, trunc_normal_
 
-from timm.models.layers import DropPath, trunc_normal_
-from timm.models.registry import register_model
+# 不需要注册，因为并没有timm.create_model(...)这样调用官方的，用自己定义的
+# from timm.models.registry import register_model
+# from timm.models import register_model
 # timm.layers.helpers
-from timm.models.layers.helpers import to_2tuple
+from timm.layers.helpers import to_2tuple
+# from timm.models.layers.helpers import to_2tuple
 from torch.cuda.amp import autocast
+from thop import profile
+import numpy as np
+import time
 
 EfficientFormer_width = {
     'l1': [48, 96, 224, 448],
@@ -47,6 +53,7 @@ class Attention(torch.nn.Module):
         self.N2 = self.N
         self.qkv = nn.Linear(dim, h)
         self.proj = nn.Linear(self.dh, dim)
+
 
         points = list(itertools.product(range(resolution), range(resolution)))
         N = len(points)
@@ -85,14 +92,22 @@ class Attention(torch.nn.Module):
                 (self.attention_biases[:, self.attention_bias_idxs]
                  if self.training else self.ab)
         )
+        # 注意力矩阵，用于可视化
         attn = attn.softmax(dim=-1)
+        # detach不保留计算图，用于可视化。反之保留计算图 可视化时一般.detach().cpu().numpy()
+        self.attn_visual = attn
+        # attn： [B, heads, N, N]
+        # v： [B, heads, N, d]
+        # (attn @ v) → [B, heads, N, d]
+        # .transpose(1, 2) → [B, N, heads, d]
+        # .reshape(B, N, dh) → [B, N, dh] # dh = heads * d
         x = (attn @ v).transpose(1, 2).reshape(B, N, self.dh)
         x = self.proj(x)
 
 
         return x
 
-
+# 降采样两次，224->112->56
 def stem(in_chs, out_chs):
     return nn.Sequential(
         nn.Conv2d(in_chs, out_chs // 2, kernel_size=3, stride=2, padding=1),
@@ -242,6 +257,7 @@ class Meta3D(nn.Module):
                 layer_scale_init_value * torch.ones((dim)), requires_grad=True)
 
     def forward(self, x):
+        # 走这里
         if self.use_layer_scale:
             x = x + self.drop_path(
                 self.layer_scale_1.unsqueeze(0).unsqueeze(0)
@@ -300,10 +316,12 @@ def meta_blocks(dim, index, layers,
                 use_layer_scale=True, layer_scale_init_value=1e-5, vit_num=1):
     blocks = []
     if index == 3 and vit_num == layers[index]:
+        #stage4 的最后 vit_num 个 block 会在 4D 特征 (B,C,H,W) → token (B,N,C) N=H*W
         blocks.append(Flat())
     for block_idx in range(layers[index]):
         block_dpr = drop_path_rate * (
                 block_idx + sum(layers[:index])) / (sum(layers) - 1)
+        # efficientformer四个stage,只有最后stage用到注意力机制
         if index == 3 and layers[index] - block_idx <= vit_num:
             blocks.append(Meta3D(
                 dim, mlp_ratio=mlp_ratio,
@@ -321,6 +339,7 @@ def meta_blocks(dim, index, layers,
                 layer_scale_init_value=layer_scale_init_value,
             ))
             if index == 3 and layers[index] - block_idx - 1 == vit_num:
+                # 最后为7*7=49个tokens
                 blocks.append(Flat())
 
     blocks = nn.Sequential(*blocks)
@@ -335,7 +354,7 @@ class EfficientFormer(nn.Module):
                  norm_layer=nn.LayerNorm, act_layer=nn.GELU,
                  num_classes=1000,
                  down_patch_size=3, down_stride=2, down_pad=1,
-                 drop_rate=0.3, drop_path_rate=0.3,
+                 drop_rate=0.3, drop_path_rate=0.4,
                  use_layer_scale=True, layer_scale_init_value=1e-6,
                  fork_feat=False,
                  init_cfg=None,
@@ -351,9 +370,11 @@ class EfficientFormer(nn.Module):
         if not fork_feat:
             self.num_classes = num_classes
         self.fork_feat = fork_feat
-
+        # 224降采样两次至56
         self.patch_embed = stem(3, embed_dims[0])
 
+
+        # 每个stage之间下采样两倍，即224->56->28(1-2)->14(2-3)->7(3-4)，进入stage4时为7*7
         network = []
         for i in range(len(layers)):
             stage = meta_blocks(embed_dims[i], i, layers,
@@ -368,7 +389,7 @@ class EfficientFormer(nn.Module):
             if i >= len(layers) - 1:
                 break
             if downsamples[i] or embed_dims[i] != embed_dims[i + 1]:
-                # downsampling between two stages
+                # downsampling between two stages  down_strid为2，再次下采样两倍，stage之间
                 network.append(
                     Embedding(
                         patch_size=down_patch_size, stride=down_stride,
@@ -470,7 +491,10 @@ class EfficientFormer(nn.Module):
                 # otuput features of four stages for dense prediction
                 return x
             x = self.norm(x) #[b,49,512]
+
+
             pooled=x.mean(-2)# [B, embed_dim] [b,512]
+
 
             if return_feature:
                 # 返回特征向量，不经过 head
@@ -501,7 +525,7 @@ def _cfg(url='', **kwargs):
     }
 
 
-@register_model
+# @register_model
 def efficientformer_l1(num_classes, use_amp, **kwargs):
     model = EfficientFormer(
         layers=EfficientFormer_depth['l1'],
@@ -513,7 +537,7 @@ def efficientformer_l1(num_classes, use_amp, **kwargs):
     return model
 
 
-@register_model
+# @register_model
 def efficientformer_l3(num_classes, use_amp, **kwargs):
     model = EfficientFormer(
         layers=EfficientFormer_depth['l3'],
@@ -525,7 +549,7 @@ def efficientformer_l3(num_classes, use_amp, **kwargs):
     return model
 
 
-@register_model
+# @register_model
 def efficientformer_l7(pretrained=False, **kwargs):
     model = EfficientFormer(
         layers=EfficientFormer_depth['l7'],
@@ -579,6 +603,9 @@ def measure_latency_cpu(model, batch_size=1):
 
         print("Mean Inference Time on CPU: {:.4f} ms".format(mean_time))
         print("Standard Deviation: {:.4f} ms".format(std_time))
+        # 计算吞吐量
+        Throughput = (repetitions * batch_size) / np.sum(timings)
+        print('Final Throughput:', Throughput)
 
 def measure_latency(model,batch_size=1):
     device = torch.device('cuda:0')
@@ -609,6 +636,7 @@ def measure_latency(model,batch_size=1):
             ender.record()
             # 等待 GPU 同步
             torch.cuda.synchronize()
+            # ms
             curr_time = starter.elapsed_time(ender)
             timings[rep] = curr_time
 
@@ -618,137 +646,83 @@ def measure_latency(model,batch_size=1):
         # 打印输出结果
         print("Mean Inference Time: {:.4f} ms".format(mean_time))
         print("Standard Deviation: {:.4f} ms".format(std_time))
-def find_max_batchsize(model, input_size, device='cuda', dtype=torch.float, max_trial=16384):
 
-    model.to(device)
-    model.eval()
+        # 计算吞吐量 image/ms
+        print('batchsize:',batch_size)
+        print('np.sum(timings):',np.sum(timings))
+        Throughput = (repetitions * batch_size)* 1000.0 / np.sum(timings)
+        print('Final Throughput:', Throughput)
 
-    low = 1
-    high = max_trial
-    max_batch = 1
+class EnsembleModel(nn.Module):
+    def __init__(self, models):
+        super().__init__()
+        self.models = nn.ModuleList(models)
 
-    while low <= high:
-        mid = (low + high) // 2
-        try:
-            dummy_input = torch.randn((mid, *input_size), device=device, dtype=dtype)
-            with torch.no_grad():
-                _ = model(dummy_input)
-            # 如果成功，不断尝试更大的 batch size
-            max_batch = mid
-            low = mid + 1
-        except RuntimeError as e:
-            if 'out of memory' in str(e):
-                # OOM 出现，减小 batch size
-                high = mid - 1
-                torch.cuda.empty_cache()
-            else:
-                raise e
-    return max_batch
+    def forward(self, x1):
+        outs = []
+
+        for m in self.models:
+            out = m(x1)
+            if isinstance(out, tuple):
+                out = out[0]
+            outs.append(out)
+
+        return torch.stack(outs, dim=0).mean(dim=0)
+
 if __name__ == '__main__':
-    from thop import profile
-    import numpy as np
-    import time
-    model = efficientformer_l3(num_classes=4,use_amp=False)
-    # print(model)
-    # 30.38M
-    print(f"Total number of parameters: {count_parameters_in_proper_unit(model)}")
 
 
-    input = torch.randn(1, 3, 224, 224)
+    # # ###### interop->intraop->1.omp 2.MKL->cpu kernel execution->cudnn benchmark->gpu kernel
+    # # CPU层（防止线程爆炸）
+    # # CPU线程控制 openmp线程数 :PyTorch CPU ops（部分）NumPyOpenCV 一些底层算子（比如 layernorm / reduce
+    # os.environ["OMP_NUM_THREADS"] = "8"
+    # # Intel MKL（矩阵库）线程数：torch.matmul  nn.Linear  NumPy（如果 linked MKL）
+    # os.environ["MKL_NUM_THREADS"] = "8"
+    # # PyTorch intra-op 线程池，控制一个op多少线程
+    # torch.set_num_threads(8)
+    # # 算子之间的并行 控制几个op并行
+    # torch.set_num_interop_threads(1)
+    #
+    # # # GPU层（卷积优化）
+    # torch.backends.cudnn.benchmark = True
+    #
+    # model = efficientformer_l3(num_classes=4,use_amp=False)
+    # # print(model)
+    # # 30.38M
+    # print(f"Total number of parameters: {count_parameters_in_proper_unit(model)}")
+    #
+    #
+    # input = torch.randn(1, 3, 224, 224)
+    #
+    # flops, params = profile(model, inputs=(input,))
+    # print(f"FLOPs: {flops / 1e9:.2f} GFLOPs")
+    # print(f"Params: {params / 1e6:.2f} M")
+    #
+    # # input_size = (3, 224, 224)
+    # # print("Maximum batch size:", max_batch)
+    # measure_latency(model)
+    # # measure_latency(model, max_batch)
 
-    flops, params = profile(model, inputs=(input,))
-    print(f"FLOPs: {flops / 1e9:.2f} GFLOPs")
-    print(f"Params: {params / 1e6:.2f} M")
+    # ###### interop->intraop->1.omp 2.MKL->cpu kernel execution->cudnn benchmark->gpu kernel
+    # CPU层（防止线程爆炸）
+    # CPU线程控制 openmp线程数 :PyTorch CPU ops（部分）NumPyOpenCV 一些底层算子（比如 layernorm / reduce
+    os.environ["OMP_NUM_THREADS"] = "12"
+    # Intel MKL（矩阵库）线程数：torch.matmul  nn.Linear  NumPy（如果 linked MKL）
+    os.environ["MKL_NUM_THREADS"] = "12"
+    # PyTorch intra-op 线程池，控制一个op多少线程
+    torch.set_num_threads(12)
+    # 算子之间的并行 控制几个op并行
+    torch.set_num_interop_threads(1)
 
-    # input_size = (3, 224, 224)
-    # max_batch = find_max_batchsize(model, input_size)
-    # print("Maximum batch size:", max_batch)
-    measure_latency(model)
+    # # GPU层（卷积优化）
+    torch.backends.cudnn.benchmark = True
+
+    net1 = efficientformer_l3(num_classes=4, use_amp=False)
+    net2 = efficientformer_l3(num_classes=4, use_amp=False)
+    net3 = efficientformer_l3(num_classes=4, use_amp=False)
+    net4 = efficientformer_l3(num_classes=4, use_amp=False)
+    net5 = efficientformer_l3(num_classes=4, use_amp=False)
+    net = EnsembleModel([net1, net2, net3, net4, net5])
+
+    measure_latency(net)
     # measure_latency(model, max_batch)
-
-#
-# def measure_latency(model, device, batch_size=1, repetitions=1000):
-#     """
-#     测量单个设备上模型的 latency / FPS
-#     """
-#     # 创建随机输入
-#     dummy_input = torch.randn(batch_size, 3, 224, 224).to(device)
-#     model.to(device)
-#     model.eval()
-#
-#     timings = []
-#
-#     # CPU 或 GPU 预热
-#     with torch.no_grad():
-#         for _ in range(50):
-#             _ = model(dummy_input)
-#
-#     # 测量 latency
-#     with torch.no_grad():
-#         for _ in range(repetitions):
-#             start_time = time.perf_counter()
-#             _ = model(dummy_input)
-#             end_time = time.perf_counter()
-#             timings.append((end_time - start_time) * 1000)  # ms
-#
-#     timings = np.array(timings)
-#     mean_time = np.mean(timings)
-#     std_time = np.std(timings)
-#     fps = 1000 / mean_time  # batch=1
-#     return mean_time, std_time, fps, timings
-#
-#
-# # -----------------------------
-# # 配置不同实验条件
-# # -----------------------------
-# models = {"EfficientFormer": efficientformer_model,
-#           "VGG": vgg_model}
-#
-# devices = ["cpu", "cuda"]  # GPU/CPU
-# cpu_cores_list = [1, 4, 8, 16]  # 只对 CPU 有效
-# batch_sizes = [1, 2, 4]  # 可扩展
-#
-# results = []
-#
-# for model_name, model in models.items():
-#     for device_name in devices:
-#         if device_name == "cpu":
-#             for num_cores in cpu_cores_list:
-#                 torch.set_num_threads(num_cores)
-#                 for batch_size in batch_sizes:
-#                     mean_time, std_time, fps, timings = measure_latency(
-#                         model, torch.device("cpu"), batch_size=batch_size
-#                     )
-#                     results.append({
-#                         "Model": model_name,
-#                         "Device": "CPU",
-#                         "CPU_Cores": num_cores,
-#                         "Batch_Size": batch_size,
-#                         "Mean_Latency_ms": mean_time,
-#                         "Std_Latency_ms": std_time,
-#                         "FPS": fps
-#                     })
-#         else:
-#             # GPU 情况不需要设置核心数
-#             for batch_size in batch_sizes:
-#                 mean_time, std_time, fps, timings = measure_latency(
-#                     model, torch.device("cuda"), batch_size=batch_size
-#                 )
-#                 results.append({
-#                     "Model": model_name,
-#                     "Device": "GPU",
-#                     "CPU_Cores": None,
-#                     "Batch_Size": batch_size,
-#                     "Mean_Latency_ms": mean_time,
-#                     "Std_Latency_ms": std_time,
-#                     "FPS": fps
-#                 })
-#
-# df = pd.DataFrame(results)
-# df.to_csv("latency_fps_results.csv", index=False)
-# print(df)
-# output_csv = "latency_fps_results.csv"
-# df.to_csv(output_csv, index=False)
-# print(f"Latency/FPS results saved to {output_csv}")
-
-

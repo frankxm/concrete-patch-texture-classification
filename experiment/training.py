@@ -1,11 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""
-    The train module
-    ======================
 
-    Use it to train a model.
-"""
 import gc
 import logging
 import os
@@ -25,11 +20,12 @@ import model
 import math
 import torch.optim
 from pathlib import Path
+import heapq
+
 
 def init_metrics(no_of_classes: int) -> dict:
 
     return {"matrix": np.zeros((no_of_classes, no_of_classes)), "loss": 0}
-
 
 def log_metrics(epoch: int, metrics: dict, writer,learning_rate, step: str):
 
@@ -45,9 +41,153 @@ def log_metrics(epoch: int, metrics: dict, writer,learning_rate, step: str):
         # 记录学习率
         writer.add_scalar(f"{step_name}_learning_rate", learning_rate, epoch)
         logging.info("  {} {}: learning_rate={}".format(step_name, epoch, round(learning_rate, 6)))
-
-
-
+#
+# def run_one_epoch(
+#     loader,
+#     params: dict,
+#     writer,
+#     epochs: list,
+#     no_of_epochs: int,
+#     device: str,
+#     norm_params: dict,
+#     classes_names: list,
+#     batchsize:int,
+#     desired_batch_size:int,
+#     logpath,
+#     model_name,
+#     step: str,
+#
+#
+#
+# ):
+#     # 一轮的全局指标
+#     metrics = init_metrics(len(classes_names))
+#     epoch = epochs[0]
+#
+#     total_steps = len(loader)
+#     t = tqdm(loader, total=total_steps)
+#     step_name = "TRAIN" if step == "Training" else "VALID"
+#     t.set_description(
+#         "{} (prog) {}/{} batchsize:{}".format(step_name, epoch, no_of_epochs + epochs[1], batchsize)
+#     )
+#
+#     accumulation_steps = desired_batch_size // batchsize
+#     # 梯度裁剪的最大范数
+#     max_grad_norm = 1.0
+#     # 初始化累积步数计数器
+#     accumulation_counter = 0
+#
+#     num_samples_until_this_batch=0
+#
+#     log_path = os.path.join(logpath,"gate_scale_log.txt")
+#     log_interval = 50  # 每50 step记录一次
+#     epoch_gate_list = []
+#     epoch_scale_list = []
+#     for index, data in enumerate(t, 1):
+#         with autocast(enabled=params["use_amp"]):
+#             # 训练不能用这个，同步操作，会阻塞cpu，降低cpu速度，拖慢训练
+#             # torch.cuda.empty_cache()
+#             if params["use_amp"]:
+#                 if model_name=='midfusionmodel':
+#                     output  = params["net"](data["image"].to(device).half(),data["texture"].to(device).half())
+#
+#                 else:
+#                     output = params["net"](data["image"].to(device).half())
+#             else:
+#                 if model_name=='midfusionmodel':
+#                     output = params["net"](data["image"].to(device).float(),data["texture"].to(device).float())
+#                 else:
+#                     output = params["net"](data["image"].to(device).float())
+#
+#         if step == "Training":
+#             # if model_name == 'midfusionmodel':
+#             #     index += 1
+#             #     gate_mean = gate.mean().item()
+#             #     scale_val = scale.item()
+#             #     epoch_gate_list.append(gate_mean)
+#             #     epoch_scale_list.append(scale_val)
+#             #     if index % log_interval == 0:
+#             #         with open(log_path, "a") as f:
+#             #             f.write(
+#             #                 f"training epoch {epoch}, step {index}, "
+#             #                 f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
+#             #             )
+#             loss = params["criterion"](output, data["label"].to(device))
+#         else:
+#             loss = params["criterion_val"](output, data["label"].to(device))
+#
+#
+#
+#         original_loss = loss
+#         if step =="Training":
+#             # 梯度累计：将损失缩小 当前 mini-batch 的 loss 除以累计步数，这是为了模拟在每个大 batch 下的平均梯度更新。
+#             loss = loss / accumulation_steps
+#             params["scaler"].scale(loss).backward()
+#             accumulation_counter += 1
+#
+#         batchsize=output.shape[0]
+#         num_samples_until_this_batch+=batchsize
+#         # 计算和更新指标,更新指标以原batchsize为准
+#         for pred in range(output.shape[0]):
+#             current_pred = output[pred, :].argmax().item()
+#             # 使用 .item() 转换为标量
+#             current_label = data["label"][pred].item()
+#
+#             batch_metrics = p_metrics.compute_metrics(
+#                 current_pred, current_label, original_loss.item(), classes_names
+#             )
+#             metrics = p_metrics.update_metrics(metrics, batch_metrics, pred,batchsize)
+#
+#         # 如果达到累计步数，执行梯度更新
+#         if accumulation_counter % accumulation_steps == 0:
+#             if step == "Training":
+#                 # 梯度裁剪
+#                 params["scaler"].unscale_(params["optimizer"])
+#                 torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
+#                 # 更新参数
+#                 params["scaler"].step(params["optimizer"])
+#                 params["scaler"].update()
+#                 # 清零梯度
+#                 params["optimizer"].zero_grad()
+#                 logging.info(f"Terminer les {accumulation_counter} tours de gradient d'accumulation")
+#
+#             # 重置累积步数计数器
+#             accumulation_counter = 0
+#         # 计算到目前批次为止的指标以及loss 一轮的loss整体上是所有批次loss相加除以批次数 对于第n个批次来说loss就是loss_sum/n(老法
+#         # 新法：计算total sample loss。 一轮的loss是所有sample的loss和除以sample数，防止最后一个batch不满batchsize的情况下，造成最后一个batch权重比正常batch高，所以最终loss偏高不稳定
+#         epoch_values = tr_utils.get_epoch_values(metrics, classes_names,num_samples_until_this_batch)
+#         display_values = epoch_values
+#         display_values["loss"] = round(display_values["loss"], 4)
+#         t.set_postfix(values=str(display_values))
+#
+#
+#     # 最后一次梯度更新，防止没有被 accumulation_steps 整除的情况
+#     if accumulation_counter != 0:
+#         if step == "Training":
+#             # 梯度裁剪
+#             params["scaler"].unscale_(params["optimizer"])
+#             torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
+#             # 更新参数
+#             params["scaler"].step(params["optimizer"])
+#             params["scaler"].update()
+#             params["optimizer"].zero_grad()
+#             logging.info(f"Terminer les {accumulation_counter} tours restants de gradient d'accumulation")
+#
+#     if step == "Training":
+#         # if model_name == 'midfusionmodel' and len(epoch_gate_list) > 0:
+#         #     epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
+#         #     epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
+#         #
+#         #     with open(log_path, "a") as f:
+#         #         f.write(
+#         #             f"[Training Epoch {epoch} Summary] "
+#         #             f"gate_mean {epoch_gate_mean:.6f}, "
+#         #             f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
+#         #         )
+#         return params, epoch_values
+#     else:
+#         return epoch_values
+#
 def run_one_epoch(
     loader,
     params: dict,
@@ -83,25 +223,45 @@ def run_one_epoch(
     # 初始化累积步数计数器
     accumulation_counter = 0
 
+    num_samples_until_this_batch=0
+
+    log_path = os.path.join(logpath,"gate_scale_log.txt")
+    log_interval = 50  # 每50 step记录一次
+    epoch_gate_list = []
+    epoch_scale_list = []
     for index, data in enumerate(t, 1):
-
-
         with autocast(enabled=params["use_amp"]):
-            torch.cuda.empty_cache()
+            # 训练不能用这个，同步操作，会阻塞cpu，降低cpu速度，拖慢训练
+            # torch.cuda.empty_cache()
             if params["use_amp"]:
                 if model_name=='midfusionmodel':
-                    output = params["net"](data["image"].to(device).half(),data["texture"].to(device).half())
+                    output,gate, scale  = params["net"](data["image"].to(device).half(),data["texture"].to(device).half())
+
                 else:
                     output = params["net"](data["image"].to(device).half())
             else:
                 if model_name=='midfusionmodel':
-                    output = params["net"](data["image"].to(device).float(),data["texture"].to(device).float())
+                    output,gate, scale  = params["net"](data["image"].to(device).float(),data["texture"].to(device).float())
                 else:
                     output = params["net"](data["image"].to(device).float())
 
+        if step == "Training":
+            if model_name == 'midfusionmodel':
+                index += 1
+                gate_mean = gate.mean().item()
+                scale_val = scale.item()
+                epoch_gate_list.append(gate_mean)
+                epoch_scale_list.append(scale_val)
+                if index % log_interval == 0:
+                    with open(log_path, "a") as f:
+                        f.write(
+                            f"training epoch {epoch}, step {index}, "
+                            f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
+                        )
+            loss = params["criterion"](output, data["label"].to(device))
+        else:
+            loss = params["criterion_val"](output, data["label"].to(device))
 
-            _, preds = torch.max(output, 1)
-            loss =  params["criterion"](output, data["label"].to(device))
 
 
         original_loss = loss
@@ -111,6 +271,8 @@ def run_one_epoch(
             params["scaler"].scale(loss).backward()
             accumulation_counter += 1
 
+        batchsize=output.shape[0]
+        num_samples_until_this_batch+=batchsize
         # 计算和更新指标,更新指标以原batchsize为准
         for pred in range(output.shape[0]):
             current_pred = output[pred, :].argmax().item()
@@ -120,7 +282,7 @@ def run_one_epoch(
             batch_metrics = p_metrics.compute_metrics(
                 current_pred, current_label, original_loss.item(), classes_names
             )
-            metrics = p_metrics.update_metrics(metrics, batch_metrics, pred)
+            metrics = p_metrics.update_metrics(metrics, batch_metrics, pred,batchsize)
 
         # 如果达到累计步数，执行梯度更新
         if accumulation_counter % accumulation_steps == 0:
@@ -137,8 +299,9 @@ def run_one_epoch(
 
             # 重置累积步数计数器
             accumulation_counter = 0
-        # 计算到目前批次为止的指标以及loss 一轮的loss整体上是所有批次loss相加除以批次数 对于第n个批次来说loss就是loss_sum/n
-        epoch_values = tr_utils.get_epoch_values(metrics, classes_names, index)
+        # 计算到目前批次为止的指标以及loss 一轮的loss整体上是所有批次loss相加除以批次数 对于第n个批次来说loss就是loss_sum/n(老法
+        # 新法：计算total sample loss。 一轮的loss是所有sample的loss和除以sample数，防止最后一个batch不满batchsize的情况下，造成最后一个batch权重比正常batch高，所以最终loss偏高不稳定
+        epoch_values = tr_utils.get_epoch_values(metrics, classes_names,num_samples_until_this_batch)
         display_values = epoch_values
         display_values["loss"] = round(display_values["loss"], 4)
         t.set_postfix(values=str(display_values))
@@ -157,9 +320,201 @@ def run_one_epoch(
             logging.info(f"Terminer les {accumulation_counter} tours restants de gradient d'accumulation")
 
     if step == "Training":
+        if model_name == 'midfusionmodel' and len(epoch_gate_list) > 0:
+            epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
+            epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
+
+            with open(log_path, "a") as f:
+                f.write(
+                    f"[Training Epoch {epoch} Summary] "
+                    f"gate_mean {epoch_gate_mean:.6f}, "
+                    f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
+                )
         return params, epoch_values
     else:
         return epoch_values
+
+# #######双头
+# def run_one_epoch(
+#     loader,
+#     params: dict,
+#     writer,
+#     epochs: list,
+#     no_of_epochs: int,
+#     device: str,
+#     norm_params: dict,
+#     classes_names: list,
+#     batchsize:int,
+#     desired_batch_size:int,
+#     logpath,
+#     model_name,
+#     step: str,
+#
+#
+#
+# ):
+#     # 一轮的全局指标
+#     metrics = init_metrics(len(classes_names))
+#     epoch = epochs[0]
+#
+#     total_steps = len(loader)
+#     t = tqdm(loader, total=total_steps)
+#     step_name = "TRAIN" if step == "Training" else "VALID"
+#     t.set_description(
+#         "{} (prog) {}/{} batchsize:{}".format(step_name, epoch, no_of_epochs + epochs[1], batchsize)
+#     )
+#
+#     accumulation_steps = desired_batch_size // batchsize
+#     # 梯度裁剪的最大范数
+#     max_grad_norm = 1.0
+#     # 初始化累积步数计数器
+#     accumulation_counter = 0
+#
+#     num_samples_until_this_batch=0
+#
+#     log_path = os.path.join(logpath,"gate_scale_log.txt")
+#     log_interval = 50  # 每50 step记录一次
+#     epoch_gate_list = []
+#     epoch_scale_list = []
+#
+#
+#     for index, data in enumerate(t, 1):
+#         with autocast(enabled=params["use_amp"]):
+#             # 训练不能用这个，同步操作，会阻塞cpu，降低cpu速度，拖慢训练
+#             # torch.cuda.empty_cache()
+#             if params["use_amp"]:
+#                 if model_name=='midfusionmodel':
+#                     #双头
+#                     output,output_ecrase, gate, scale = params["net"](data["image"].to(device).half(),
+#                                                         data["texture"].to(device).half())
+#
+#                 else:
+#                     output = params["net"](data["image"].to(device).half())
+#             else:
+#                 if model_name=='midfusionmodel':
+#                     output,output_ecrase, gate, scale = params["net"](data["image"].to(device).float(),
+#                                                         data["texture"].to(device).float())
+#
+#                 else:
+#                     output = params["net"](data["image"].to(device).float())
+#
+#         if step == "Training":
+#             if model_name == 'midfusionmodel':
+#                 index += 1
+#                 gate_mean = gate.mean().item()
+#                 scale_val = scale.item()
+#                 epoch_gate_list.append(gate_mean)
+#                 epoch_scale_list.append(scale_val)
+#                 if index % log_interval == 0:
+#                     with open(log_path, "a") as f:
+#                         f.write(
+#                             f"training epoch {epoch}, step {index}, "
+#                             f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
+#                         )
+#
+#             labels = data["label"].to(device)
+#             labels_ecrase = (labels == 4).float().unsqueeze(1)
+#             mask = labels != 4
+#             if mask.sum() > 0:
+#                 loss_cls = params["criterion"](output[mask], labels[mask])
+#             else:
+#                 loss_cls = 0.0 * output.sum()  # 避免报错
+#             loss_ecrase = params["criterion_ecrase"](output_ecrase, labels_ecrase)
+#             lambda_ecrase = 0.5
+#             loss = loss_cls + lambda_ecrase * loss_ecrase
+#         else:
+#
+#             labels = data["label"].to(device)
+#             labels_ecrase = (labels == 4).float().unsqueeze(1)
+#             mask = labels != 4
+#             if mask.sum() > 0:
+#                 loss_cls = params["criterion_val"](output[mask], labels[mask])
+#             else:
+#                 loss_cls = 0.0 * output.sum()  # 避免报错
+#             loss_ecrase = params["criterion_val_ecrase"](output_ecrase, labels_ecrase)
+#             lambda_ecrase = 0.5
+#             loss = loss_cls + lambda_ecrase * loss_ecrase
+#
+#
+#         original_loss = loss
+#         if step =="Training":
+#             # 梯度累计：将损失缩小 当前 mini-batch 的 loss 除以累计步数，这是为了模拟在每个大 batch 下的平均梯度更新。
+#             loss = loss / accumulation_steps
+#             params["scaler"].scale(loss).backward()
+#             accumulation_counter += 1
+#
+#         batchsize=output.shape[0]
+#         num_samples_until_this_batch+=batchsize
+#         # 计算和更新指标,更新指标以原batchsize为准
+#         for pred in range(output.shape[0]):
+#             prob_cls = torch.softmax(output[pred], dim=0)
+#             prob_e = torch.sigmoid(output_ecrase[pred]).item()
+#
+#             if prob_e > 0.7:
+#                 current_pred = 4
+#             else:
+#                 current_pred = prob_cls.argmax().item()
+#
+#             # current_pred = output[pred, :].argmax().item()
+#             # 使用 .item() 转换为标量
+#             current_label = data["label"][pred].item()
+#
+#             batch_metrics = p_metrics.compute_metrics(
+#                 current_pred, current_label, original_loss.item(), classes_names,loss_cls.item(),loss_ecrase.item()
+#             )
+#             metrics = p_metrics.update_metrics(metrics, batch_metrics, pred,batchsize)
+#
+#         # 如果达到累计步数，执行梯度更新
+#         if accumulation_counter % accumulation_steps == 0:
+#             if step == "Training":
+#                 # 梯度裁剪
+#                 params["scaler"].unscale_(params["optimizer"])
+#                 torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
+#                 # 更新参数
+#                 params["scaler"].step(params["optimizer"])
+#                 params["scaler"].update()
+#                 # 清零梯度
+#                 params["optimizer"].zero_grad()
+#                 logging.info(f"Terminer les {accumulation_counter} tours de gradient d'accumulation")
+#
+#             # 重置累积步数计数器
+#             accumulation_counter = 0
+#         # 计算到目前批次为止的指标以及loss 一轮的loss整体上是所有批次loss相加除以批次数 对于第n个批次来说loss就是loss_sum/n(老法
+#         # 新法：计算total sample loss。 一轮的loss是所有sample的loss和除以sample数，防止最后一个batch不满batchsize的情况下，造成最后一个batch权重比正常batch高，所以最终loss偏高不稳定
+#         epoch_values = tr_utils.get_epoch_values(metrics, classes_names,num_samples_until_this_batch)
+#         display_values = epoch_values
+#         display_values["loss"] = round(display_values["loss"], 4)
+#         t.set_postfix(values=str(display_values))
+#
+#
+#     # 最后一次梯度更新，防止没有被 accumulation_steps 整除的情况
+#     if accumulation_counter != 0:
+#         if step == "Training":
+#             # 梯度裁剪
+#             params["scaler"].unscale_(params["optimizer"])
+#             torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
+#             # 更新参数
+#             params["scaler"].step(params["optimizer"])
+#             params["scaler"].update()
+#             params["optimizer"].zero_grad()
+#             logging.info(f"Terminer les {accumulation_counter} tours restants de gradient d'accumulation")
+#
+#     if step == "Training":
+#         if model_name == 'midfusionmodel' and len(epoch_gate_list) > 0:
+#             epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
+#             epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
+#
+#             with open(log_path, "a") as f:
+#                 f.write(
+#                     f"[Training Epoch {epoch} Summary] "
+#                     f"gate_mean {epoch_gate_mean:.6f}, "
+#                     f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
+#                 )
+#         return params, epoch_values
+#     else:
+#         return epoch_values
+
+
 #   模型微调情况下初始学习率大概在1e-3 ~  1e-5
 def find_lr(train_dataloader,tr_params,device,batchsize,init_value = 1e-4, final_value=1, beta = 0.98):
     optimizer=tr_params["optimizer"]
@@ -358,11 +713,18 @@ def run(
     use_gpu,
     model_name
 ):
+    tr_params["topk"] = []
+    tr_params["topk_k"] = 5
+
     if use_gpu:
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device("cpu")
-    # early_stopping = EarlyStopping(patience=100, delta=0.01)
+
+    # 两倍lr衰减，允许衰减两次30后停止
+    early_stopping = EarlyStopping(patience=35, delta=0.001)
+
+
     # # Warmup scheduler: 将学习率逐步从接近 0 增加到目标学习率，持续  个 epoch 以避免在训练初期学习率过高导致的不稳定性。
     # warmup_epochs = 20
     # warmup_scheduler = LambdaLR(
@@ -392,7 +754,7 @@ def run(
         tr_params["optimizer"],
         mode='min',
         factor=0.1,
-        patience=25,
+        patience=15,
         verbose=True,
         min_lr=1e-7,
     )
@@ -505,49 +867,89 @@ def run(
             # if learning_rate<=0.0001:
             #     controller.unfreez_all()
 
+            if model_path is not None:
+                model_path = Path(model_path)
+                save_dir = (log_path / model_path).parent
+            else:
+                save_dir = log_path
+
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            update_topk(
+                tr_params,
+                model,
+                current_epoch ,
+                epoch_values["loss"],
+                save_dir
+            )
+
 
             # # 早停策略
-            # early_stopping(epoch_values["loss"])
-            # if early_stopping.stop_training:
-            #     logging.info(f"Early stopping at epoch {current_epoch}")
-            #     print(f"Early stopping at epoch {current_epoch}")
-            #     break
+            early_stopping(epoch_values["loss"])
+            if early_stopping.stop_training:
+                logging.info(f"Early stopping at epoch {current_epoch}")
+                print(f"Early stopping at epoch {current_epoch}")
 
-            if model_path is not None:
-                model_last_path = (log_path / model_path).with_name("model_last.pth")
-                model_best_path = (log_path / model_path).with_name("model_best.pth")
-            else:
-                model_last_path = log_path / "texture_model/model_last.pth"
-                model_best_path = log_path / "texture_model/model_best.pth"
+                # if model_path is not None:
+                #     model_path = Path(model_path)
+                #     save_dir = (log_path / model_path).parent
+                # else:
+                #     save_dir = log_path
+                #
+                # save_dir.mkdir(parents=True, exist_ok=True)
+                #
+                # model_last_path = save_dir / "model_last.pth"
+                #
+                # # 每一轮都保存当前模型，覆盖 model_last.pth
+                # model.save_model(
+                #     current_epoch + 1,
+                #     tr_params["net"].state_dict(),
+                #     epoch_values["loss"],
+                #     tr_params["optimizer"].state_dict(),
+                #     tr_params["scaler"].state_dict(),
+                #     model_last_path,
+                # )
+                # logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
 
 
-            if not os.path.exists(model_last_path.parent):
-                os.makedirs(model_last_path.parent)
+                break
 
-            # 每一轮都保存当前模型，覆盖 model_last.pth
-            model.save_model(
-                current_epoch + 1,
-                tr_params["net"].state_dict(),
-                epoch_values["loss"],
-                tr_params["optimizer"].state_dict(),
-                tr_params["scaler"].state_dict(),
-                model_last_path,
-            )
-            logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
 
-            # 判断是否为最佳模型，保存为 model_best.pth
-            if epoch_values["loss"] < tr_params["best_loss"]:
-                tr_params["best_loss"] = epoch_values["loss"]
-
-                model.save_model(
-                    current_epoch + 1,
-                    tr_params["net"].state_dict(),
-                    epoch_values["loss"],
-                    tr_params["optimizer"].state_dict(),
-                    tr_params["scaler"].state_dict(),
-                    model_best_path,
-                )
-                logging.info("Best model (epoch %d) saved to %s", current_epoch + 1, model_best_path)
+            # if model_path is not None:
+            #     model_path = Path(model_path)
+            #     save_dir = (log_path / model_path).parent
+            # else:
+            #     save_dir = log_path
+            #
+            # save_dir.mkdir(parents=True, exist_ok=True)
+            #
+            # model_last_path = save_dir / "model_last.pth"
+            # model_best_path = save_dir / "model_best.pth"
+            #
+            # # 每一轮都保存当前模型，覆盖 model_last.pth
+            # model.save_model(
+            #     current_epoch + 1,
+            #     tr_params["net"].state_dict(),
+            #     epoch_values["loss"],
+            #     tr_params["optimizer"].state_dict(),
+            #     tr_params["scaler"].state_dict(),
+            #     model_last_path,
+            # )
+            # logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
+            #
+            # # 判断是否为最佳模型，保存为 model_best.pth
+            # if epoch_values["loss"] < tr_params["best_loss"]:
+            #     tr_params["best_loss"] = epoch_values["loss"]
+            #
+            #     model.save_model(
+            #         current_epoch + 1,
+            #         tr_params["net"].state_dict(),
+            #         epoch_values["loss"],
+            #         tr_params["optimizer"].state_dict(),
+            #         tr_params["scaler"].state_dict(),
+            #         model_best_path,
+            #     )
+            #     logging.info("Best model (epoch %d) saved to %s", current_epoch + 1, model_best_path)
 
 
 
@@ -566,7 +968,7 @@ class EarlyStopping:
         self.stop_training = False
 
     def __call__(self, val_loss):
-        if val_loss < self.best_loss - self.delta:
+        if val_loss < self.best_loss + self.delta:
             self.best_loss = val_loss
             self.counter = 0
         else:
@@ -622,3 +1024,47 @@ class TrainingPhaseController:
         for name, param in self.model.named_parameters():
             print(f"Name: {name}, Shape: {param.shape}, Requires Grad: {param.requires_grad}")
 
+
+
+def update_topk(tr_params, model, epoch, loss, save_dir):
+    K = tr_params["topk_k"]
+    topk = tr_params["topk"]
+
+    # 当前 checkpoint 路径
+    ckpt_path = save_dir / f"model_epoch_{epoch:03d}_loss_{loss:.4f}.pth"
+
+    # 还没满 K，直接加
+    if len(topk) < K:
+        model.save_model(
+            epoch,
+            tr_params["net"].state_dict(),
+            loss,
+            tr_params["optimizer"].state_dict(),
+            tr_params["scaler"].state_dict(),
+            ckpt_path,
+        )
+        heapq.heappush(topk, (-loss, ckpt_path))  # max-heap（用负号）
+        return
+
+    # 当前最差（heap top）
+    worst_loss, worst_path = topk[0]
+    worst_loss = -worst_loss
+
+    if loss < worst_loss:
+        # 删除最差 checkpoint
+        if Path(worst_path).exists():
+            Path(worst_path).unlink()
+
+        heapq.heappop(topk)
+
+        # 保存新的
+        model.save_model(
+            epoch,
+            tr_params["net"].state_dict(),
+            loss,
+            tr_params["optimizer"].state_dict(),
+            tr_params["scaler"].state_dict(),
+            ckpt_path,
+        )
+
+        heapq.heappush(topk, (-loss, ckpt_path))

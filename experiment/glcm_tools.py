@@ -35,12 +35,13 @@ def region_glcm(image, distances, angles, levels, standardize=False):
     bin_image[mask] = levels
 
     glcms = graycomatrix(bin_image, distances, angles, levels + 1, symmetric=True)
-
+    # 不取边界值，即原图的无效区域（像素为0）大小为(levels+1,levels+1,num_distances, num_angles)
     glcms = glcms[:-1, :-1, ...].astype(float)  # Crop the row and column corresponding to intensity levels + 1
     for i in range(len(distances)):
         for j in range(len(angles)):
             n_pairs = np.sum(glcms[..., i, j])
             if n_pairs > 0:
+                # 归一化变成概率矩阵
                 p = glcms[..., i, j]/np.sum(glcms[..., i, j])
             else:
                 p = glcms[..., i, j]
@@ -52,9 +53,11 @@ def region_glcm(image, distances, angles, levels, standardize=False):
 def get_glcm_features(glcm, props, avg_and_range=False):
 
     if avg_and_range:
+        # len(distances) * len(angles) * len(props))
         features = np.zeros(glcm.shape[2] * 2 * len(props))
 
         for idx, prop in enumerate(props):
+            # shape = (d, θ)
             f = graycoprops(glcm, prop)
             a = np.mean(f, -1)
             r = np.ptp(f, -1)
@@ -65,6 +68,7 @@ def get_glcm_features(glcm, props, avg_and_range=False):
 
         for idx, prop in enumerate(props):
             f = graycoprops(glcm, prop)
+            # f展平为[d1θ1, d2θ1, ..., d1θ2, d2θ2, ...]
             features[idx * glcm.shape[2] * glcm.shape[3]:
                      idx * glcm.shape[2] * glcm.shape[3] + glcm.shape[2] * glcm.shape[3]] = f.flatten('F')
 

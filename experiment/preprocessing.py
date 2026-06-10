@@ -24,13 +24,13 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import logging
 import pandas as pd
-import visualize_features
 import config
 config_dict = config.__dict__
 from lbp_tools import *
 from glcm_tools import *
 from skimage.util import img_as_ubyte
 import pywt
+import visualize_features
 
 class TrainingDataset(Dataset):
 
@@ -359,7 +359,8 @@ def random_rotate(image,generator):
     angle = random_uniform(generator, -180, 180)
     image_center = tuple(np.array(image.shape[1::-1]) / 2)
     rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-    image = cv2.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv2.INTER_LINEAR)
+    # 旋转出的空白区域默认为黑色，现在用边缘像素镜像补充
+    image = cv2.warpAffine(image, rot_mat, image.shape[1::-1], flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT)
 
     return image
 
@@ -380,7 +381,7 @@ def random_shift(image,generator, max_shift=200):
     tx = random_randint(generator, -max_shift, max_shift)
     ty = random_randint(generator, -max_shift, max_shift)
     shift_matrix = np.float32([[1, 0, tx], [0, 1, ty]])
-    image = cv2.warpAffine(image, shift_matrix, (cols, rows))
+    image = cv2.warpAffine(image, shift_matrix, (cols, rows),borderMode=cv2.BORDER_REFLECT)
 
     return image
 
@@ -452,20 +453,22 @@ def gray_array_to_rgb(mask):
 
 
 
-def readimagelabel(image_folder,label_path,label_no_need):
+def readimagelabel(image_folder,label_path=None):
     image_label_dict={}
 
-    df = pd.read_csv(label_path)
+    if label_path is not None:
 
-    # dataset2 不考虑没有class2的ecrase情况
-    # # 先筛掉 class=4 且 class2 为空的行
-    # filtered_df = df[(df["class"] != 4) | ((df["class"] == 4) & df["class2"].notna())]
-    # # 直接把 class==4 的行，替换成 class2 的值
-    # filtered_df.loc[filtered_df["class"] == 4, "class"] = filtered_df["class2"]
-    # df=filtered_df
+        df = pd.read_csv(label_path)
 
-    labels = df["class"].values
-    image_names=df['image'].values
+        # dataset2 不考虑没有class2的ecrase情况
+        # # 先筛掉 class=4 且 class2 为空的行
+        # filtered_df = df[(df["class"] != 4) | ((df["class"] == 4) & df["class2"].notna())]
+        # # 直接把 class==4 的行，替换成 class2 的值
+        # filtered_df.loc[filtered_df["class"] == 4, "class"] = filtered_df["class2"]
+        # df=filtered_df
+
+        labels = df["class"].values
+        image_names=df['image'].values
 
 
     for filename in os.listdir(image_folder):
@@ -478,10 +481,12 @@ def readimagelabel(image_folder,label_path,label_no_need):
             if image is None:
                 continue
             base_name, _ = os.path.splitext(filename)
-            image_names_list = image_names.tolist()
-            if filename not in image_names_list:
-                continue
-            if not label_no_need:
+            # 训练阶段
+            if label_path is not None:
+                image_names_list = image_names.tolist()
+                if filename not in image_names_list:
+                    continue
+
                 label = labels[image_names_list.index(filename)]
                 image_label_dict[base_name]=(image,label)
             # # 预测阶段label没用，训练阶段有用，不需要获取label，所以label随意设置，后续也用不到
@@ -543,13 +548,15 @@ def resize_with_padding(image, target_size=299):
 
 
 def augmente_images(processed_image,name,label,image_label_dict):
-    rotation_list=[-4, -3, -2, 2,  3, 4 ]
+    # rotation_list=[-10,-9,-8,-7,-6,-5,-4, -3, -2, 2,  3, 4,5,6,7,8,9,10]
+    rotation_list = [-4, -3, -2, 2, 3, 4]
+    # cv2.imwrite(f'{name}.png', processed_image)
     # rotation
     for angle in rotation_list:
         name_current=f'{name}_angle{str(angle)}'
         image_center = tuple(np.array(processed_image.shape[1::-1]) / 2)
         rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
-        image_rotation = cv2.warpAffine(processed_image, rot_mat, processed_image.shape[1::-1], flags=cv2.INTER_LINEAR)
+        image_rotation = cv2.warpAffine(processed_image, rot_mat, processed_image.shape[1::-1], flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT)
         image_label_dict[name_current] = (image_rotation, label)
         # cv2.imwrite(f'{name_current}.png',image_rotation)
 
@@ -563,22 +570,37 @@ def augmente_images(processed_image,name,label,image_label_dict):
         image_label_dict[name_current] = (image_illumination, label)
         # cv2.imwrite(f'{name_current}.png', image_illumination)
 
-        #
-        # plt.figure(alpha_beta_pairs.index(pair))
-        # plt.imshow(image_illumination)
-        # plt.show()
 
+    #
+    # for dx, dy in [(-10, 0), (10, 0), (0, -10), (0, 10),(10,10),(-10,-10),(10,-10),(-10,10)]:
+    #     M = np.float32([[1, 0, dx], [0, 1, dy]])
+    #     shifted = cv2.warpAffine(processed_image, M, processed_image.shape[1::-1],
+    #                              borderMode=cv2.BORDER_REFLECT)
+    #     image_label_dict[f"{name}_shift_{dx}_{dy}"] = (shifted, label)
+    #     cv2.imwrite(f"{name}_shift_{dx}_{dy}.png", shifted)
+    #
+    #
+    # blur = cv2.GaussianBlur(processed_image, (5, 5), 0)
+    # image_label_dict[f"{name}_blur"] = (blur, label)
+    # cv2.imwrite(f"{name}_blur.png", blur)
+    #
+    # noise = np.random.normal(0, 10, processed_image.shape).astype(np.int16)
+    # noisy_image = np.clip(processed_image + noise, 0, 255).astype(np.uint8)
+    # image_label_dict[f"{name}_noise"] = (noisy_image, label)
+    # cv2.imwrite(f"{name}_noise.png", noisy_image)
+    #
 
 
 def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,use_images_generees=False,images_generees_path=None,classes_names=None,num_genere=None):
-    image_label_dict = readimagelabel(imagedir, label_path,label_no_need=False)
+    image_label_dict = readimagelabel(imagedir, label_path)
 
     processed_images=[]
+    processed_labels=[]
 
     imagenamelist = [os.path.splitext(i)[0] for i in os.listdir(str(imagedir))]
-
-    scale_list=[0.97, 0.98, 0.99,1.01, 1.02, 1.03]
-    # 一张图共16种变化 207*17=3519
+    scale_list = [0.97, 0.98, 0.99, 1.01, 1.02, 1.03]
+    # scale_list=[0.8,0.9,0.95,0.96,0.97,0.98,1.02,1.03,1.04, 1.05,1.1,1.2]
+    # 一张图共16种变化 207*17=3519(原
     for i, name in enumerate(tqdm(imagenamelist, desc=f"Augmente et Calcule mean std des images {set}")):
         try:
             sample = image_label_dict[name]
@@ -590,6 +612,7 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
         # 原图padding
         processed_image = resize_with_padding(image, output_size)
         processed_images.append(processed_image)
+        processed_labels.append(label)
         image_label_dict[name] = (processed_image, label)
 
 
@@ -607,11 +630,13 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
                 # cv2.imwrite(f'{name_current}.png',processed_image)
 
     if set == 'train' and use_images_generees:
+        virtual_images = []
+        virtual_labels = []
         for cls in classes_names:
             cls_path=os.path.join(images_generees_path,cls.lower())
             num_samples=int(num_genere[classes_names.index(cls)])
             image_genere_namelist = [os.path.splitext(i)[0] for i in os.listdir(str(cls_path))]
-            image_genere_label_dict = readimagelabel(cls_path, label_path, label_no_need=False)
+            image_genere_label_dict = readimagelabel(cls_path, label_path)
             selected_names = random.sample(image_genere_namelist, num_samples)
             for i, name in enumerate(tqdm(selected_names, desc=f"Load images {cls} generees par stylegan3 {set}")):
                 sample = image_genere_label_dict[name]
@@ -621,17 +646,45 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
                 processed_image = resize_with_padding(image, output_size)
                 image_label_dict[name] = (processed_image, label)
 
-                if set == 'train':
-                    # 多种增强
-                    augmente_images(processed_image, name, label, image_label_dict)
-                    # 原图的不同scale
-                    for scale in scale_list:
-                        new_h = int(image.shape[0] * scale)
-                        new_w = int(image.shape[1] * scale)
-                        scaled_image = cv2.resize(image, (new_w, new_h))
-                        processed_image = resize_with_padding(scaled_image, output_size)
-                        name_current = f'{name}_scale{str(scale)}'
-                        image_label_dict[name_current] = (processed_image, label)
+                virtual_images.append(processed_image)
+                virtual_labels.append(label)
+
+        # # 单独虚拟图像特征可视化virtual
+        # X, names, feature_names = get_texture(virtual_images, **config_dict)
+        # # # tsne降维可视化，532维->2维 dataset2 original
+        # visualize_features.tsne(X, np.array(virtual_labels), len(classes_names))
+
+
+                # if set == 'train':
+                #     # 多种增强
+                #     augmente_images(processed_image, name, label, image_label_dict)
+                #     # 原图的不同scale
+                #     for scale in scale_list:
+                #         new_h = int(image.shape[0] * scale)
+                #         new_w = int(image.shape[1] * scale)
+                #         scaled_image = cv2.resize(image, (new_w, new_h))
+                #         processed_image = resize_with_padding(scaled_image, output_size)
+                #         name_current = f'{name}_scale{str(scale)}'
+                #         image_label_dict[name_current] = (processed_image, label)
+
+
+    # #  欠采样
+    # if set == 'train':
+    #     labels_list = [v[1] for v in image_label_dict.values()]
+    #     label_arr = np.array(labels_list)
+    #     unique_vals, counts = np.unique(label_arr, return_counts=True)
+    #     min_num = np.min(counts)
+    #     undersample_dict={}
+    #     for c in unique_vals:
+    #         cls_dict={k:v   for k,v in image_label_dict.items() if v[1]==c}
+    #         selected_cls_key = random.sample(list(cls_dict.keys()), min_num)
+    #         new_dict = {k: cls_dict[k] for k in selected_cls_key}
+    #         undersample_dict.update(new_dict)
+    #     undersample_dict_keys = list(undersample_dict.keys())
+    #     random.shuffle(undersample_dict_keys)
+    #     undersample_dict_shuffle = {k: undersample_dict[k] for k in undersample_dict_keys}
+    #     image_label_dict=undersample_dict_shuffle
+
 
     # 输出最终类别比例
     labels_list = [v[1] for v in image_label_dict.values()]
@@ -644,17 +697,28 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
     proportion = {val: (cnt, ratio) for val, cnt, ratio in zip(unique_vals, counts, ratios)}
 
 
+
     if set =='train':
         mean_final, std_final = compute_mean_std(processed_images)
 
         logging.info(f"Mean in {set}: {mean_final}")
         logging.info(f"Std in {set}: {std_final}")
 
+        # 原dataset
+        X, names, feature_names = get_texture(processed_images, **config_dict)
+        # tsne降维可视化，532维->2维 dataset2 original
+        # visualize_features.tsne(X, np.array(processed_labels), len(classes_names))
+        # 单独虚拟图像特征可视化virtual
+        # X, names, feature_names = get_texture(virtual_images, **config_dict)
+        # # # tsne降维可视化，532维->2维 dataset2 original
+        # visualize_features.tsne(X, np.array(virtual_labels), 4)
+        #原dataset+augmented+virtual
+        # image_all = [item[0] for item in image_label_dict.values()]
+        # mask = [item[1] for item in image_label_dict.values()]
+        # X, names, feature_names = get_texture(image_all, **config_dict)
+        # visualize_features.tsne(X, np.array(mask), len(classes_names))
 
 
-
-        # visualize_features.tsne(X,np.array(mask) )
-        # visualize_features.pca(X, np.array(mask))
 
         return image_label_dict, mean_final, std_final,proportion
     else:
@@ -824,6 +888,10 @@ def get_texture(batch_images,**kwargs):
         ])
         X.append(all_features)
         # X.append(np.concatenate((glcm_features[0, :], lbps_features[0, :])))
+    # dis->angle->prop
+    # ['glcm_001px_000deg_contrast', 'glcm_002px_000deg_contrast', 'glcm_003px_000deg_contrast', 'glcm_004px_000deg_contrast', 'glcm_005px_000deg_contrast', 'glcm_006px_000deg_contrast', 'glcm_007px_000deg_contrast', 'glcm_008px_000deg_contrast', 'glcm_009px_000deg_contrast', 'glcm_010px_000deg_contrast', 'glcm_011px_000deg_contrast', 'glcm_012px_000deg_contrast', 'glcm_013px_000deg_contrast', 'glcm_014px_000deg_contrast', 'glcm_015px_000deg_contrast', 'glcm_016px_000deg_contrast', 'glcm_017px_000deg_contrast', 'glcm_018px_000deg_contrast', 'glcm_019px_000deg_contrast', 'glcm_020px_000deg_contrast', 'glcm_021px_000deg_contrast', 'glcm_022px_000deg_contrast', 'glcm_023px_000deg_contrast', 'glcm_024px_000deg_contrast', 'glcm_025px_000deg_contrast', 'glcm_026px_000deg_contrast', 'glcm_027px_000deg_contrast', 'glcm_028px_000deg_contrast', 'glcm_029px_000deg_contrast', 'glcm_030px_000deg_contrast', 'glcm_031px_000deg_contrast', 'glcm_032px_000deg_contrast', 'glcm_033px_000deg_contrast', 'glcm_034px_000deg_contrast', 'glcm_035px_000deg_contrast', 'glcm_036px_000deg_contrast', 'glcm_037px_000deg_contrast', 'glcm_038px_000deg_contrast', 'glcm_039px_000deg_contrast', 'glcm_040px_000deg_contrast', 'glcm_041px_000deg_contrast', 'glcm_042px_000deg_contrast', 'glcm_043px_000deg_contrast', 'glcm_044px_000deg_contrast', 'glcm_045px_000deg_contrast', 'glcm_046px_000deg_contrast', 'glcm_047px_000deg_contrast', 'glcm_048px_000deg_contrast', 'glcm_049px_000deg_contrast', 'glcm_050px_000deg_contrast', 'glcm_001px_090deg_contrast', 'glcm_002px_090deg_contrast', 'glcm_003px_090deg_contrast', 'glcm_004px_090deg_contrast', 'glcm_005px_090deg_contrast', 'glcm_006px_090deg_contrast', 'glcm_007px_090deg_contrast', 'glcm_008px_090deg_contrast', 'glcm_009px_090deg_contrast', 'glcm_010px_090deg_contrast', 'glcm_011px_090deg_contrast', 'glcm_012px_090deg_contrast', 'glcm_013px_090deg_contrast', 'glcm_014px_090deg_contrast', 'glcm_015px_090deg_contrast', 'glcm_016px_090deg_contrast', 'glcm_017px_090deg_contrast', 'glcm_018px_090deg_contrast', 'glcm_019px_090deg_contrast', 'glcm_020px_090deg_contrast', 'glcm_021px_090deg_contrast', 'glcm_022px_090deg_contrast', 'glcm_023px_090deg_contrast', 'glcm_024px_090deg_contrast', 'glcm_025px_090deg_contrast', 'glcm_026px_090deg_contrast', 'glcm_027px_090deg_contrast', 'glcm_028px_090deg_contrast', 'glcm_029px_090deg_contrast', 'glcm_030px_090deg_contrast', 'glcm_031px_090deg_contrast', 'glcm_032px_090deg_contrast', 'glcm_033px_090deg_contrast', 'glcm_034px_090deg_contrast', 'glcm_035px_090deg_contrast', 'glcm_036px_090deg_contrast', 'glcm_037px_090deg_contrast', 'glcm_038px_090deg_contrast', 'glcm_039px_090deg_contrast', 'glcm_040px_090deg_contrast', 'glcm_041px_090deg_contrast', 'glcm_042px_090deg_contrast', 'glcm_043px_090deg_contrast', 'glcm_044px_090deg_contrast', 'glcm_045px_090deg_contrast', 'glcm_046px_090deg_contrast', 'glcm_047px_090deg_contrast', 'glcm_048px_090deg_contrast', 'glcm_049px_090deg_contrast', 'glcm_050px_090deg_contrast', 'glcm_001px_000deg_dissimilarity', 'glcm_002px_000deg_dissimilarity', 'glcm_003px_000deg_dissimilarity', 'glcm_004px_000deg_dissimilarity', 'glcm_005px_000deg_dissimilarity', 'glcm_006px_000deg_dissimilarity', 'glcm_007px_000deg_dissimilarity', 'glcm_008px_000deg_dissimilarity', 'glcm_009px_000deg_dissimilarity', 'glcm_010px_000deg_dissimilarity', 'glcm_011px_000deg_dissimilarity', 'glcm_012px_000deg_dissimilarity', 'glcm_013px_000deg_dissimilarity', 'glcm_014px_000deg_dissimilarity', 'glcm_015px_000deg_dissimilarity', 'glcm_016px_000deg_dissimilarity', 'glcm_017px_000deg_dissimilarity', 'glcm_018px_000deg_dissimilarity', 'glcm_019px_000deg_dissimilarity', 'glcm_020px_000deg_dissimilarity', 'glcm_021px_000deg_dissimilarity', 'glcm_022px_000deg_dissimilarity', 'glcm_023px_000deg_dissimilarity', 'glcm_024px_000deg_dissimilarity', 'glcm_025px_000deg_dissimilarity', 'glcm_026px_000deg_dissimilarity', 'glcm_027px_000deg_dissimilarity', 'glcm_028px_000deg_dissimilarity', 'glcm_029px_000deg_dissimilarity', 'glcm_030px_000deg_dissimilarity', 'glcm_031px_000deg_dissimilarity', 'glcm_032px_000deg_dissimilarity', 'glcm_033px_000deg_dissimilarity', 'glcm_034px_000deg_dissimilarity', 'glcm_035px_000deg_dissimilarity', 'glcm_036px_000deg_dissimilarity', 'glcm_037px_000deg_dissimilarity', 'glcm_038px_000deg_dissimilarity', 'glcm_039px_000deg_dissimilarity', 'glcm_040px_000deg_dissimilarity', 'glcm_041px_000deg_dissimilarity', 'glcm_042px_000deg_dissimilarity', 'glcm_043px_000deg_dissimilarity', 'glcm_044px_000deg_dissimilarity', 'glcm_045px_000deg_dissimilarity', 'glcm_046px_000deg_dissimilarity', 'glcm_047px_000deg_dissimilarity', 'glcm_048px_000deg_dissimilarity', 'glcm_049px_000deg_dissimilarity', 'glcm_050px_000deg_dissimilarity', 'glcm_001px_090deg_dissimilarity', 'glcm_002px_090deg_dissimilarity', 'glcm_003px_090deg_dissimilarity', 'glcm_004px_090deg_dissimilarity', 'glcm_005px_090deg_dissimilarity', 'glcm_006px_090deg_dissimilarity', 'glcm_007px_090deg_dissimilarity', 'glcm_008px_090deg_dissimilarity', 'glcm_009px_090deg_dissimilarity', 'glcm_010px_090deg_dissimilarity', 'glcm_011px_090deg_dissimilarity', 'glcm_012px_090deg_dissimilarity', 'glcm_013px_090deg_dissimilarity', 'glcm_014px_090deg_dissimilarity', 'glcm_015px_090deg_dissimilarity', 'glcm_016px_090deg_dissimilarity', 'glcm_017px_090deg_dissimilarity', 'glcm_018px_090deg_dissimilarity', 'glcm_019px_090deg_dissimilarity', 'glcm_020px_090deg_dissimilarity', 'glcm_021px_090deg_dissimilarity', 'glcm_022px_090deg_dissimilarity', 'glcm_023px_090deg_dissimilarity', 'glcm_024px_090deg_dissimilarity', 'glcm_025px_090deg_dissimilarity', 'glcm_026px_090deg_dissimilarity', 'glcm_027px_090deg_dissimilarity', 'glcm_028px_090deg_dissimilarity', 'glcm_029px_090deg_dissimilarity', 'glcm_030px_090deg_dissimilarity', 'glcm_031px_090deg_dissimilarity', 'glcm_032px_090deg_dissimilarity', 'glcm_033px_090deg_dissimilarity', 'glcm_034px_090deg_dissimilarity', 'glcm_035px_090deg_dissimilarity', 'glcm_036px_090deg_dissimilarity', 'glcm_037px_090deg_dissimilarity', 'glcm_038px_090deg_dissimilarity', 'glcm_039px_090deg_dissimilarity', 'glcm_040px_090deg_dissimilarity', 'glcm_041px_090deg_dissimilarity', 'glcm_042px_090deg_dissimilarity', 'glcm_043px_090deg_dissimilarity', 'glcm_044px_090deg_dissimilarity', 'glcm_045px_090deg_dissimilarity', 'glcm_046px_090deg_dissimilarity', 'glcm_047px_090deg_dissimilarity', 'glcm_048px_090deg_dissimilarity', 'glcm_049px_090deg_dissimilarity', 'glcm_050px_090deg_dissimilarity', 'glcm_001px_000deg_homogeneity', 'glcm_002px_000deg_homogeneity', 'glcm_003px_000deg_homogeneity', 'glcm_004px_000deg_homogeneity', 'glcm_005px_000deg_homogeneity', 'glcm_006px_000deg_homogeneity', 'glcm_007px_000deg_homogeneity', 'glcm_008px_000deg_homogeneity', 'glcm_009px_000deg_homogeneity', 'glcm_010px_000deg_homogeneity', 'glcm_011px_000deg_homogeneity', 'glcm_012px_000deg_homogeneity', 'glcm_013px_000deg_homogeneity', 'glcm_014px_000deg_homogeneity', 'glcm_015px_000deg_homogeneity', 'glcm_016px_000deg_homogeneity', 'glcm_017px_000deg_homogeneity', 'glcm_018px_000deg_homogeneity', 'glcm_019px_000deg_homogeneity', 'glcm_020px_000deg_homogeneity', 'glcm_021px_000deg_homogeneity', 'glcm_022px_000deg_homogeneity', 'glcm_023px_000deg_homogeneity', 'glcm_024px_000deg_homogeneity', 'glcm_025px_000deg_homogeneity', 'glcm_026px_000deg_homogeneity', 'glcm_027px_000deg_homogeneity', 'glcm_028px_000deg_homogeneity', 'glcm_029px_000deg_homogeneity', 'glcm_030px_000deg_homogeneity', 'glcm_031px_000deg_homogeneity', 'glcm_032px_000deg_homogeneity', 'glcm_033px_000deg_homogeneity', 'glcm_034px_000deg_homogeneity', 'glcm_035px_000deg_homogeneity', 'glcm_036px_000deg_homogeneity', 'glcm_037px_000deg_homogeneity', 'glcm_038px_000deg_homogeneity', 'glcm_039px_000deg_homogeneity', 'glcm_040px_000deg_homogeneity', 'glcm_041px_000deg_homogeneity', 'glcm_042px_000deg_homogeneity', 'glcm_043px_000deg_homogeneity', 'glcm_044px_000deg_homogeneity', 'glcm_045px_000deg_homogeneity', 'glcm_046px_000deg_homogeneity', 'glcm_047px_000deg_homogeneity', 'glcm_048px_000deg_homogeneity', 'glcm_049px_000deg_homogeneity', 'glcm_050px_000deg_homogeneity', 'glcm_001px_090deg_homogeneity', 'glcm_002px_090deg_homogeneity', 'glcm_003px_090deg_homogeneity', 'glcm_004px_090deg_homogeneity', 'glcm_005px_090deg_homogeneity', 'glcm_006px_090deg_homogeneity', 'glcm_007px_090deg_homogeneity', 'glcm_008px_090deg_homogeneity', 'glcm_009px_090deg_homogeneity', 'glcm_010px_090deg_homogeneity', 'glcm_011px_090deg_homogeneity', 'glcm_012px_090deg_homogeneity', 'glcm_013px_090deg_homogeneity', 'glcm_014px_090deg_homogeneity', 'glcm_015px_090deg_homogeneity', 'glcm_016px_090deg_homogeneity', 'glcm_017px_090deg_homogeneity', 'glcm_018px_090deg_homogeneity', 'glcm_019px_090deg_homogeneity', 'glcm_020px_090deg_homogeneity', 'glcm_021px_090deg_homogeneity', 'glcm_022px_090deg_homogeneity', 'glcm_023px_090deg_homogeneity', 'glcm_024px_090deg_homogeneity', 'glcm_025px_090deg_homogeneity', 'glcm_026px_090deg_homogeneity', 'glcm_027px_090deg_homogeneity', 'glcm_028px_090deg_homogeneity', 'glcm_029px_090deg_homogeneity', 'glcm_030px_090deg_homogeneity', 'glcm_031px_090deg_homogeneity', 'glcm_032px_090deg_homogeneity', 'glcm_033px_090deg_homogeneity', 'glcm_034px_090deg_homogeneity', 'glcm_035px_090deg_homogeneity', 'glcm_036px_090deg_homogeneity', 'glcm_037px_090deg_homogeneity', 'glcm_038px_090deg_homogeneity', 'glcm_039px_090deg_homogeneity', 'glcm_040px_090deg_homogeneity', 'glcm_041px_090deg_homogeneity', 'glcm_042px_090deg_homogeneity', 'glcm_043px_090deg_homogeneity', 'glcm_044px_090deg_homogeneity', 'glcm_045px_090deg_homogeneity', 'glcm_046px_090deg_homogeneity', 'glcm_047px_090deg_homogeneity', 'glcm_048px_090deg_homogeneity', 'glcm_049px_090deg_homogeneity', 'glcm_050px_090deg_homogeneity', 'glcm_001px_000deg_energy', 'glcm_002px_000deg_energy', 'glcm_003px_000deg_energy', 'glcm_004px_000deg_energy', 'glcm_005px_000deg_energy', 'glcm_006px_000deg_energy', 'glcm_007px_000deg_energy', 'glcm_008px_000deg_energy', 'glcm_009px_000deg_energy', 'glcm_010px_000deg_energy', 'glcm_011px_000deg_energy', 'glcm_012px_000deg_energy', 'glcm_013px_000deg_energy', 'glcm_014px_000deg_energy', 'glcm_015px_000deg_energy', 'glcm_016px_000deg_energy', 'glcm_017px_000deg_energy', 'glcm_018px_000deg_energy', 'glcm_019px_000deg_energy', 'glcm_020px_000deg_energy', 'glcm_021px_000deg_energy', 'glcm_022px_000deg_energy', 'glcm_023px_000deg_energy', 'glcm_024px_000deg_energy', 'glcm_025px_000deg_energy', 'glcm_026px_000deg_energy', 'glcm_027px_000deg_energy', 'glcm_028px_000deg_energy', 'glcm_029px_000deg_energy', 'glcm_030px_000deg_energy', 'glcm_031px_000deg_energy', 'glcm_032px_000deg_energy', 'glcm_033px_000deg_energy', 'glcm_034px_000deg_energy', 'glcm_035px_000deg_energy', 'glcm_036px_000deg_energy', 'glcm_037px_000deg_energy', 'glcm_038px_000deg_energy', 'glcm_039px_000deg_energy', 'glcm_040px_000deg_energy', 'glcm_041px_000deg_energy', 'glcm_042px_000deg_energy', 'glcm_043px_000deg_energy', 'glcm_044px_000deg_energy', 'glcm_045px_000deg_energy', 'glcm_046px_000deg_energy', 'glcm_047px_000deg_energy', 'glcm_048px_000deg_energy', 'glcm_049px_000deg_energy', 'glcm_050px_000deg_energy', 'glcm_001px_090deg_energy', 'glcm_002px_090deg_energy', 'glcm_003px_090deg_energy', 'glcm_004px_090deg_energy', 'glcm_005px_090deg_energy', 'glcm_006px_090deg_energy', 'glcm_007px_090deg_energy', 'glcm_008px_090deg_energy', 'glcm_009px_090deg_energy', 'glcm_010px_090deg_energy', 'glcm_011px_090deg_energy', 'glcm_012px_090deg_energy', 'glcm_013px_090deg_energy', 'glcm_014px_090deg_energy', 'glcm_015px_090deg_energy', 'glcm_016px_090deg_energy', 'glcm_017px_090deg_energy', 'glcm_018px_090deg_energy', 'glcm_019px_090deg_energy', 'glcm_020px_090deg_energy', 'glcm_021px_090deg_energy', 'glcm_022px_090deg_energy', 'glcm_023px_090deg_energy', 'glcm_024px_090deg_energy', 'glcm_025px_090deg_energy', 'glcm_026px_090deg_energy', 'glcm_027px_090deg_energy', 'glcm_028px_090deg_energy', 'glcm_029px_090deg_energy', 'glcm_030px_090deg_energy', 'glcm_031px_090deg_energy', 'glcm_032px_090deg_energy', 'glcm_033px_090deg_energy', 'glcm_034px_090deg_energy', 'glcm_035px_090deg_energy', 'glcm_036px_090deg_energy', 'glcm_037px_090deg_energy', 'glcm_038px_090deg_energy', 'glcm_039px_090deg_energy', 'glcm_040px_090deg_energy', 'glcm_041px_090deg_energy', 'glcm_042px_090deg_energy', 'glcm_043px_090deg_energy', 'glcm_044px_090deg_energy', 'glcm_045px_090deg_energy', 'glcm_046px_090deg_energy', 'glcm_047px_090deg_energy', 'glcm_048px_090deg_energy', 'glcm_049px_090deg_energy', 'glcm_050px_090deg_energy', 'glcm_001px_000deg_correlation', 'glcm_002px_000deg_correlation', 'glcm_003px_000deg_correlation', 'glcm_004px_000deg_correlation', 'glcm_005px_000deg_correlation', 'glcm_006px_000deg_correlation', 'glcm_007px_000deg_correlation', 'glcm_008px_000deg_correlation', 'glcm_009px_000deg_correlation', 'glcm_010px_000deg_correlation', 'glcm_011px_000deg_correlation', 'glcm_012px_000deg_correlation', 'glcm_013px_000deg_correlation', 'glcm_014px_000deg_correlation', 'glcm_015px_000deg_correlation', 'glcm_016px_000deg_correlation', 'glcm_017px_000deg_correlation', 'glcm_018px_000deg_correlation', 'glcm_019px_000deg_correlation', 'glcm_020px_000deg_correlation', 'glcm_021px_000deg_correlation', 'glcm_022px_000deg_correlation', 'glcm_023px_000deg_correlation', 'glcm_024px_000deg_correlation', 'glcm_025px_000deg_correlation', 'glcm_026px_000deg_correlation', 'glcm_027px_000deg_correlation', 'glcm_028px_000deg_correlation', 'glcm_029px_000deg_correlation', 'glcm_030px_000deg_correlation', 'glcm_031px_000deg_correlation', 'glcm_032px_000deg_correlation', 'glcm_033px_000deg_correlation', 'glcm_034px_000deg_correlation', 'glcm_035px_000deg_correlation', 'glcm_036px_000deg_correlation', 'glcm_037px_000deg_correlation', 'glcm_038px_000deg_correlation', 'glcm_039px_000deg_correlation', 'glcm_040px_000deg_correlation', 'glcm_041px_000deg_correlation', 'glcm_042px_000deg_correlation', 'glcm_043px_000deg_correlation', 'glcm_044px_000deg_correlation', 'glcm_045px_000deg_correlation', 'glcm_046px_000deg_correlation', 'glcm_047px_000deg_correlation', 'glcm_048px_000deg_correlation', 'glcm_049px_000deg_correlation', 'glcm_050px_000deg_correlation', 'glcm_001px_090deg_correlation', 'glcm_002px_090deg_correlation', 'glcm_003px_090deg_correlation', 'glcm_004px_090deg_correlation', 'glcm_005px_090deg_correlation', 'glcm_006px_090deg_correlation', 'glcm_007px_090deg_correlation', 'glcm_008px_090deg_correlation', 'glcm_009px_090deg_correlation', 'glcm_010px_090deg_correlation', 'glcm_011px_090deg_correlation', 'glcm_012px_090deg_correlation', 'glcm_013px_090deg_correlation', 'glcm_014px_090deg_correlation', 'glcm_015px_090deg_correlation', 'glcm_016px_090deg_correlation', 'glcm_017px_090deg_correlation', 'glcm_018px_090deg_correlation', 'glcm_019px_090deg_correlation', 'glcm_020px_090deg_correlation', 'glcm_021px_090deg_correlation', 'glcm_022px_090deg_correlation', 'glcm_023px_090deg_correlation', 'glcm_024px_090deg_correlation', 'glcm_025px_090deg_correlation', 'glcm_026px_090deg_correlation', 'glcm_027px_090deg_correlation', 'glcm_028px_090deg_correlation', 'glcm_029px_090deg_correlation', 'glcm_030px_090deg_correlation', 'glcm_031px_090deg_correlation', 'glcm_032px_090deg_correlation', 'glcm_033px_090deg_correlation', 'glcm_034px_090deg_correlation', 'glcm_035px_090deg_correlation', 'glcm_036px_090deg_correlation', 'glcm_037px_090deg_correlation', 'glcm_038px_090deg_correlation', 'glcm_039px_090deg_correlation', 'glcm_040px_090deg_correlation', 'glcm_041px_090deg_correlation', 'glcm_042px_090deg_correlation', 'glcm_043px_090deg_correlation', 'glcm_044px_090deg_correlation', 'glcm_045px_090deg_correlation', 'glcm_046px_090deg_correlation', 'glcm_047px_090deg_correlation', 'glcm_048px_090deg_correlation', 'glcm_049px_090deg_correlation', 'glcm_050px_090deg_correlation']
+    # bin->r->p
+    # ['lbp_radius01_p08_bin000', 'lbp_radius01_p08_bin001', 'lbp_radius01_p08_bin002', 'lbp_radius01_p08_bin003', 'lbp_radius01_p08_bin004', 'lbp_radius01_p08_bin005', 'lbp_radius01_p08_bin006', 'lbp_radius01_p08_bin007', 'lbp_radius11_p08_bin000', 'lbp_radius11_p08_bin001', 'lbp_radius11_p08_bin002', 'lbp_radius11_p08_bin003', 'lbp_radius11_p08_bin004', 'lbp_radius11_p08_bin005', 'lbp_radius11_p08_bin006', 'lbp_radius11_p08_bin007', 'lbp_radius21_p08_bin000', 'lbp_radius21_p08_bin001', 'lbp_radius21_p08_bin002', 'lbp_radius21_p08_bin003', 'lbp_radius21_p08_bin004', 'lbp_radius21_p08_bin005', 'lbp_radius21_p08_bin006', 'lbp_radius21_p08_bin007', 'lbp_radius31_p08_bin000', 'lbp_radius31_p08_bin001', 'lbp_radius31_p08_bin002', 'lbp_radius31_p08_bin003', 'lbp_radius31_p08_bin004', 'lbp_radius31_p08_bin005', 'lbp_radius31_p08_bin006', 'lbp_radius31_p08_bin007']
 
     glcm_feature_names = get_glcm_feature_names(distances, angles, props)
     lbps_feature_names = get_lbp_feature_names(radii, ps, bins)
@@ -834,8 +902,8 @@ def get_texture(batch_images,**kwargs):
 
 
     return X, names, np.array(feature_names)[None, ...]
-def apply_augmentations_and_compute_stats_pred(imagedir, output_size, set,label_path):
-    image_label_dict = readimagelabel(imagedir, label_path,label_no_need=True)
+def apply_augmentations_and_compute_stats_pred(imagedir, output_size, set):
+    image_label_dict = readimagelabel(imagedir)
 
     processed_images=[]
 

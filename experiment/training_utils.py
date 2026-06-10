@@ -206,7 +206,7 @@ def display_training(
 
 
 
-def get_epoch_values(metrics: dict, classes: list, batch: int) -> dict:
+def get_epoch_values(metrics: dict, classes: list, num_samples_until_this_batch: int) -> dict:
 
     values = {}
     total_tp=0
@@ -226,6 +226,6 @@ def get_epoch_values(metrics: dict, classes: list, batch: int) -> dict:
         overall_acc = total_tp / total_samples
     else:
         overall_acc = 0
-    values["loss"] = metrics["loss"] / batch
+    values["loss"] = metrics["loss"] / num_samples_until_this_batch
     values["overall_acc"]=round(overall_acc,4)
     return values

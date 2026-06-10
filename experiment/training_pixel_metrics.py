@@ -23,15 +23,16 @@ def compute_metrics(
     return metrics
 
 
-def update_metrics(metrics: dict, batch_metrics: dict,index:int) -> dict:
+def update_metrics(metrics: dict, batch_metrics: dict,index:int,batchsize) -> dict:
 
     for i in range(metrics["matrix"].shape[0]):
         for j in range(metrics["matrix"].shape[1]):
             metrics["matrix"][i][j] += batch_metrics["matrix"][i][j]
-    #  保证一个batch加一次
-    if index==0:
-        metrics["loss"] += batch_metrics["loss"]
+    #  保证一个batch加一次,一个batch的loss算的其实是batsize个sample的平均,每个batch内，记录总loss. sum_loss+=batch_sample_loss*batchsize
+    if index==batchsize-1:
+        metrics["loss"] += batch_metrics["loss"]*batchsize
     return metrics
+
 
 
 def confusion_matrix(pred, label, classes: list) -> np.array:

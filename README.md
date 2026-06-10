@@ -1,6 +1,6 @@
 # Concrete Patch Classification
 
-This repository contains code for **texture classification of 3D concrete printing patches**, connecting to public dataset in [zenodo]() , corresponding to the dataset described below.
+This repository contains code for **texture classification of 3D concrete printing patches**, connecting to public dataset in [zenodo](https://doi.org/10.5281/zenodo.17078771) , corresponding to the dataset described below.
 
 ## Training Configuration
 
@@ -187,11 +187,13 @@ conda activate 3dcp
 pip install -r requirements.txt
 
 ```
-**_Note: Some packages such as torch, torchaudio, and torchvision may need to be installed from local wheel files for GPU/CUDA compatibility. Make sure to adjust the paths if needed. You can download local wheel files in [this page](https://download.pytorch.org/whl/torch_stable.html)_**
+**_Note: Some packages such as torch, torchaudio, and torchvision(commented in requirements.txt) may need to be installed from local wheel files for GPU/CUDA compatibility. Make sure to adjust the paths if needed. You can download local wheel files in [this page](https://download.pytorch.org/whl/torch_stable.html) (If the required version file cannot be found, try [this page](https://download.pytorch.org/whl/torch/))_**
 
 ## Pretrained Models
 The pretrained models used in this repository can be downloaded from:  
 [Google Drive Folder](https://drive.google.com/file/d/1xeNe-H36_Me3ET4Yl3Nymxbsix0M8InG/view?usp=sharing)
+
+The pretrained backbones (Efficientformerl3, InceptionResNetV2, VGG19.) were initialized with weights trained on ImageNet, and subsequently fine-tuned on our texture datasets to adapt to the specific characteristics of 3D-printed concrete layer textures.
 
 ### Included Pretrained Models
 
@@ -204,44 +206,6 @@ The pretrained models used in this repository can be downloaded from:
 
 - **VGG19 (custom)** – pretrained on ImageNet  
   > The pretrained weights are automatically downloaded from the official URL when first used.
-
-
-## Trained Models
-
-The pretrained backbones (Efficientformerl3, InceptionResNetV2, VGG19.) were initialized with weights trained on ImageNet, and subsequently fine-tuned on our texture datasets to adapt to the specific characteristics of 3D-printed concrete layer textures.
-
-Two main experimental benchmarks were constructed to evaluate the models:
-
-1. **Benchmark based on original public concrete texture dataset (Sub-dataset 1)**
-This benchmark is built using original dataset introduced [in this paper](Rill-García, R., Dokladalova, E., Dokládal, P., Caron, J.-F., Mesnil, R., Margerit, P., & Charrier, M. (2022). Inline monitoring of 3D concrete printing using computer vision. Additive Manufacturing, 60, 103175. https://doi.org/10.1016/j.addma.2022.103175) .This dataset provides **Reorganized version of the original 111 patches** with 5-fold splits.(Fluid,Good,Dry,Tearing)
-
-2. **Benchmark based on extended dataset (Sub-dataset 2)**
-This benchmark combines extended real texture samples (Sub-dataset 2). **Extended set of 426 expert-annotated patches** includes an additional geometric defect class (Crushed/Écrasé).
-
-3. **Synthetic patches generated with StyleGAN3(Sub-dataset 3)** are used as a data augmentation methode during construction of two benchmarks above, covering all five classes.(Fluid,Good,Dry,Tearing,Crushed)
-
-The final fine-tuned models of 3dcp can be downloaded from:
-
-- [**Cross-validation on Sub-dataset 1 and Sub-dataset 3**](https://drive.google.com/file/d/15aNyjWIzbQUIV6rvJ2tOo9cstdn7bKef/view?usp=sharing)  
-  **Sub-dataset 1:** Original annotated texture windows  
-  - 111 labeled texture windows (width 200) extracted from 24 raw images  
-  - Classes: Fluid, Good, Dry, Tearing  
-  - 5-fold cross-validation  
-  - Labels: `texture_windows-labels.csv`  
-  **Sub-dataset 3:** Synthetic texture windows (StyleGAN3 generated)  
-  - 1200 images per class (Fluid, Good, Dry, Tearing)  
-  - Labels: `texture_windows-labels(111+stylegan3).csv`  
-
-- [**Cross-validation on Sub-dataset 2 and Sub-dataset 3**](https://drive.google.com/file/d/1SLrhBnooC5YMga24VuzjeJIzSR987pGF/view?usp=sharing)  
-  **Sub-dataset 2:** Extended expert-annotated texture windows  
-  - 426 labeled texture windows (width 200) extracted from 24 raw images  
-  - Classes: Fluid, Good, Dry, Tearing, Crushed (Écrasé)  
-  - 5-fold cross-validation  
-  - Labels: `patch_labels(426extension).csv`  
-  **Sub-dataset 3:** Synthetic texture windows (StyleGAN3 generated)  
-  - 1200 images per class (Fluid, Good, Dry, Tearing, Crushed)  
-  - Labels: `patch_labels(426extension+stylegan3).csv`  
-
 
 
 
