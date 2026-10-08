@@ -16,7 +16,7 @@ project_root = os.path.abspath(os.path.join(current_dir, '..'))
 sys.path.append(project_root)
 
 from models.inceptionresnetv2 import InceptionResNetV2
-from models.efficientformer import efficientformer_l3
+from models.efficientformer import efficientformer_l3,efficientformer_l1
 from models.custom_vgg19 import CustomVGG19
 from models.texture_model import ConvClassifier,ConvTextureEncoder_ablation
 from models.transunet import get_r50_b16_config,VisionTransformer
@@ -52,16 +52,20 @@ def get_models(model_name,no_of_classes,use_amp):
     elif model_name=='inceptionresnetv2':
         net=InceptionResNetV2(num_classes=no_of_classes, use_amp=use_amp)
     elif model_name=='texture_model':
-        net = ConvTextureEncoder_ablation(num_classes=no_of_classes, use_amp=use_amp)
-        # net=ConvClassifier(num_classes=no_of_classes, use_amp=use_amp)
+        # net = ConvTextureEncoder_ablation(num_classes=no_of_classes, use_amp=use_amp)
+        net=ConvClassifier(num_classes=no_of_classes, use_amp=use_amp)
     elif model_name=='customtransunet':
         config_vit =get_r50_b16_config()
         config_vit.n_classes = no_of_classes
         net = VisionTransformer(config_vit, num_classes=no_of_classes, use_amp=use_amp)
     elif model_name=='midfusionmodel':
         net1 = efficientformer_l3(num_classes=no_of_classes, use_amp=use_amp)
+        # net1 = efficientformer_l1(num_classes=no_of_classes, use_amp=use_amp)
         net2 = ConvTextureEncoder(use_amp=use_amp)
         net=MidFusionModel(net1,net2,num_classes=no_of_classes, use_amp=use_amp)
+
+    elif model_name=='efficientformerl1':
+        net=efficientformer_l1(num_classes=no_of_classes, use_amp=use_amp)
 
 
     logger.info(f"Creating model: {model_name}")
@@ -95,6 +99,10 @@ def restore_model(
         # pth权重统一处理
         if os.path.basename(model_path).lower().endswith('.pth'):
             if torch.cuda.is_available():
+                #把 PosixPath 映射成 WindowsPath，防止torch.load报错
+                import pathlib
+
+                pathlib.PosixPath = pathlib.WindowsPath
                 # load默认只能加载tensor / state_dict / 基础类型，如果保存torch.save的是模型对象(pickle)需要weights_only=False
                 checkpoint = torch.load( model_path,weights_only=False)
 
@@ -105,7 +113,7 @@ def restore_model(
 
 
 
-        # 导入训练好的模型使用，或者继续训练resume
+        # 导入训练好的模型使用，一般用于继续训练resume(loss，lr/optimizer承接之前)
         if keep_last:
             checkpoint_model=checkpoint['state_dict']
             missing_keys, unexpected_keys = net.load_state_dict(checkpoint_model, strict=False)
@@ -144,24 +152,54 @@ def restore_model(
                 print(f"Total params: {total_params}")
                 print(f"Trainable params: {trainable_params}")
                 print(f"Frozen params: {total_params - trainable_params}")
-
                 # 处理 DataParallel 的情况
                 model_to_freeze = net.module if isinstance(net, torch.nn.DataParallel) else net
-                # efficientformerl3
-                # 冻结前面层
+                # 1. 冻结所有参数
                 for param in model_to_freeze.parameters():
                     param.requires_grad = False
-                # 解冻分类层
+
+                # 2. 解冻 Stage 4
+                for param in model_to_freeze.network[6].parameters():
+                    param.requires_grad = True
+
+                # 3. 解冻 LayerNorm
+                for param in model_to_freeze.norm.parameters():
+                    param.requires_grad = True
+
+                # 4. 解冻分类头
                 for param in model_to_freeze.head.parameters():
                     param.requires_grad = True
 
-                # 统计冻结和未冻结参数数目
-                total_params = sum(p.numel() for p in net.parameters())
-                trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-                print(f"Total params: {total_params}")
-                print(f"Trainable params: {trainable_params}")
-                print(f"Frozen params: {total_params - trainable_params}")
+                total_params = sum(p.numel() for p in model_to_freeze.parameters())
+                trainable_params = sum(
+                    p.numel()
+                    for p in model_to_freeze.parameters()
+                    if p.requires_grad
+                )
+
+                print(f"Total params: {total_params:,}")
+                print(f"Trainable params: {trainable_params:,}")
+                print(f"Frozen params: {total_params - trainable_params:,}")
+                print(f"Trainable ratio: {100 * trainable_params / total_params:.2f}%")
+                #
+                # # 处理 DataParallel 的情况
+                # model_to_freeze = net.module if isinstance(net, torch.nn.DataParallel) else net
+                # # efficientformerl3
+                # # 冻结前面层
+                # for param in model_to_freeze.parameters():
+                #     param.requires_grad = False
+                # # 解冻分类层
+                # for param in model_to_freeze.head.parameters():
+                #     param.requires_grad = True
+                #
+                # # 统计冻结和未冻结参数数目
+                # total_params = sum(p.numel() for p in net.parameters())
+                # trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+                #
+                # print(f"Total params: {total_params}")
+                # print(f"Trainable params: {trainable_params}")
+                # print(f"Frozen params: {total_params - trainable_params}")
 
 
             elif model_name=='inceptionresnetv2':
@@ -261,12 +299,36 @@ def restore_model(
                 # efficientformerl3
                 checkpoint.pop("head.weight", None)
                 checkpoint.pop("head.bias", None)
-                # 当调整模型架构（例如移除或替换某些层）时，可以使用 strict=False 以加载与新的模型架构兼容的部分参数
-                missing_keys, unexpected_keys = net.efficientformer.load_state_dict(checkpoint, strict=False)
+
+                model_dict = net.state_dict()
+                # 过滤掉 shape 不匹配的 key
+                filtered_dict = {}
+                skipped_keys = []
+                for k, v in checkpoint.items():
+                    if k in model_dict:
+                        if model_dict[k].shape == v.shape:
+                            filtered_dict[k] = v
+                        else:
+                            skipped_keys.append((k, v.shape, model_dict[k].shape))
+                    else:
+                        # key 不存在于当前模型中
+                        skipped_keys.append((k, v.shape, None))
+
+                # 更新模型参数
+                model_dict.update(filtered_dict)
+                missing_keys, unexpected_keys = net.efficientformer.load_state_dict(model_dict, strict=False)
                 # 直接检查哪些层的参数没有被加载  missing_keys: net 里有，但 checkpoint 里没有的参数（例如新的分类层 last_linear）。
                 print("Missing keys:", missing_keys)
                 # unexpected_keys: checkpoint 里有，但 net 里没有的参数
                 print("Unexpected keys:", unexpected_keys)
+
+
+                # # 当调整模型架构（例如移除或替换某些层）时，可以使用 strict=False 以加载与新的模型架构兼容的部分参数
+                # missing_keys, unexpected_keys = net.efficientformer.load_state_dict(checkpoint, strict=False)
+                # # 直接检查哪些层的参数没有被加载  missing_keys: net 里有，但 checkpoint 里没有的参数（例如新的分类层 last_linear）。
+                # print("Missing keys:", missing_keys)
+                # # unexpected_keys: checkpoint 里有，但 net 里没有的参数
+                # print("Unexpected keys:", unexpected_keys)
 
 
 

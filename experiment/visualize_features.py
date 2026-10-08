@@ -15,11 +15,11 @@ def tsne(features,labels,num_cls):
 
     # 进行 t-SNE 降维到 2D
     # perplexity: effective number of neighbors 小perplexity（5 ~ 20）强调局部结构，类内小簇更紧更容易“撕裂”大类类间可能更碎 大 perplexity（50 ~ 100+）强调全局结构cluster 更“平滑”类间边界可能模糊小类可能被压没
-    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30,init="pca",)
     features_2d = tsne.fit_transform(features_std)
 
     # 可视化不同类别的聚类分布
-    plt.figure(1,figsize=(8, 6))
+    plt.figure(figsize=(8, 6))
     # 5个类别
     for i in range(num_cls):
         plt.scatter(features_2d[labels == i, 0], features_2d[labels == i, 1], label=f'Class {i}', alpha=0.6)

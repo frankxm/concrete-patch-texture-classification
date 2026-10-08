@@ -11,10 +11,10 @@ import os
 
 
 class GatedFusion(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, concat_dim,dim):
         super().__init__()
         self.gate = nn.Sequential(
-            nn.Linear(dim * 2, dim),
+            nn.Linear(concat_dim, dim),
             nn.ReLU(),
             nn.Linear(dim, dim),
             nn.Sigmoid()
@@ -57,9 +57,9 @@ class ConvTextureEncoder(nn.Module):
         self.mlp = nn.Sequential(
             nn.Flatten(),  # -> [B, 32,8]->[B,32*8]
             nn.Dropout(dropout),
-            nn.Linear(out_channels * 8, fused_dim),
-            # nn.LayerNorm(fused_dim),
-            nn.BatchNorm1d(fused_dim),
+            nn.Linear(out_channels * 8, self.output_dim),
+            # nn.LayerNorm(self.output_dim),
+            nn.BatchNorm1d(self.output_dim),
             nn.ReLU(),
         )
 
@@ -83,6 +83,7 @@ class MidFusionModel(nn.Module):
         super().__init__()
         self.efficientformer = efficientformer
         self.texture_branch  = texture_branch
+
         self.amp=use_amp
         # gateconcat分类头
         # self.head = nn.Sequential(
@@ -93,11 +94,16 @@ class MidFusionModel(nn.Module):
         #     nn.Linear(fused_hidden_size, num_classes)
         # )
 
-        dim = efficientformer.embed_dims[-1]
-        self.fusion = GatedFusion(dim)
+
+        vis_dim = efficientformer.embed_dims[-1]
+        tex_dim = texture_branch.output_dim
+
+        self.texture_projection = nn.Linear(tex_dim, vis_dim)
+
+        self.fusion = GatedFusion(2*vis_dim,vis_dim)
         # gatedfusion
         self.head = nn.Sequential(
-            nn.Linear(dim, fused_hidden_size),
+            nn.Linear(vis_dim, fused_hidden_size),
             nn.BatchNorm1d(fused_hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
@@ -106,44 +112,26 @@ class MidFusionModel(nn.Module):
         self.softmax = torch.nn.Softmax(dim=1)
 
 
-        # self.vis_norm = nn.LayerNorm(efficientformer.embed_dims[-1])
-        # self.tex_norm = nn.LayerNorm(texture_branch.output_dim)
-
 
 
     def forward(self, image, texture,step='train'):
         with autocast(enabled=self.amp):
             vis_feat = self.efficientformer(image, return_feature=True)  # [B, 512]
             tex_feat = self.texture_branch (texture)  # [B, D']
-            # ##### visual branch主导
-            # # # 一阶统计 mean ,二阶std
-            # print("vis mean:", vis_feat.mean().item())
-            # print("vis std :", vis_feat.std().item())
-            # print("tex mean:", tex_feat.mean().item())
-            # print("tex std :", tex_feat.std().item())
-            # # L2 norm
-            # vis_norm = vis_feat.norm(dim=1).mean()
-            # tex_norm = tex_feat.norm(dim=1).mean()
-            # print(vis_norm, tex_norm)
-
-            ### layernorm
-            # vis_feat = self.vis_norm(vis_feat)
-            # tex_feat = self.tex_norm(tex_feat)
-
-            # print("vis mean:", vis_feat.mean().item())
-            # print("vis std :", vis_feat.std().item())
-            # print("tex mean:", tex_feat.mean().item())
-            # print("tex std :", tex_feat.std().item())
-            # vis_norm = vis_feat.norm(dim=1).mean()
-            # tex_norm = tex_feat.norm(dim=1).mean()
-            # print(vis_norm, tex_norm)
+            tex_feat = self.texture_projection(tex_feat)
 
 
+            # vis_feat = F.layer_norm(vis_feat, vis_feat.shape[1:])
+            # tex_feat = F.layer_norm(tex_feat, tex_feat.shape[1:])
+            #
+            # fused =  vis_feat +  tex_feat
             # fused = torch.cat([vis_feat, tex_feat], dim=1)
+            # gate=None
+            # scale=None
             fused,gate, scale  = self.fusion(vis_feat, tex_feat)  # [B, 512]
             logits = self.head(fused)
             if step == 'train':
-                return logits
+                return logits,gate, scale
             elif step=='prediction':
                 return self.softmax(logits)
 

@@ -10,13 +10,10 @@
 import os
 
 
-import cv2
-
-
 import torch
 from torch.utils.data import Dataset
 
-from doc_functions import rgb_to_gray_array, rgb_to_gray_value
+
 import random
 from PIL import Image, ImageEnhance, ImageFilter
 from scipy.ndimage import gaussian_filter, map_coordinates
@@ -31,6 +28,30 @@ from glcm_tools import *
 from skimage.util import img_as_ubyte
 import pywt
 import visualize_features
+from texture_extraction import *
+
+
+def rgb_to_gray_value(rgb: tuple) -> int:
+    """
+    Compute the gray value of a RGB tuple.
+    :param rgb: The RGB value to transform.
+    :return: The corresponding gray value.
+    """
+    try:
+        return int(rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114)
+    except TypeError:
+        return int(int(rgb[0]) * 0.299 + int(rgb[1]) * 0.587 + int(rgb[2]) * 0.114)
+
+
+def rgb_to_gray_array(rgb: np.ndarray) -> np.ndarray:
+    """
+    Compute the gray array (NxM) of a RGB array (NxMx3).
+    :param rgb: The RGB array to transform.
+    :return: The corresponding gray array.
+    """
+    gray_array = rgb[:, :, 0] * 0.299 + rgb[:, :, 1] * 0.587 + rgb[:, :, 2] * 0.114
+    return np.uint8(gray_array)
+
 
 class TrainingDataset(Dataset):
 
@@ -39,6 +60,7 @@ class TrainingDataset(Dataset):
     ):
         self.images = [sample[0] for sample in augment_all.values()]
         self.labels = [sample[1] for sample in augment_all.values()]
+        self.labels_extra= [sample[2] for sample in augment_all.values()]
         self.transform = transform
         self.augmentations_transformation = augmentations_transformation if augmentations_transformation else []
         self.augmentations_pixel = augmentations_pixel if augmentations_pixel else []
@@ -67,7 +89,8 @@ class TrainingDataset(Dataset):
 
         image = self.images[idx]
         label = self.labels[idx]
-        sample = {"image": image, "label": label,"size": image.shape[0:2]}
+        label_extra = self.labels_extra[idx]
+        sample = {"image": image, "label": label,"label_extra":label_extra,"size": image.shape[0:2]}
 
 
         if not self.forbid and self.augmentations_transformation and self.augmentations_pixel:
@@ -455,20 +478,25 @@ def gray_array_to_rgb(mask):
 
 def readimagelabel(image_folder,label_path=None):
     image_label_dict={}
-
+    ####label_path是否为none表示是train还是prediction阶段，prediction阶段不需要labelpath
     if label_path is not None:
 
         df = pd.read_csv(label_path)
 
-        # dataset2 不考虑没有class2的ecrase情况
-        # # 先筛掉 class=4 且 class2 为空的行
+        # # dataset2 不考虑没有class2的ecrase情况
+        # # # 先筛掉 class=4 且 class2 为空的行
         # filtered_df = df[(df["class"] != 4) | ((df["class"] == 4) & df["class2"].notna())]
-        # # 直接把 class==4 的行，替换成 class2 的值
+        # # # 直接把 class==4 的行，替换成 class2 的值
         # filtered_df.loc[filtered_df["class"] == 4, "class"] = filtered_df["class2"]
         # df=filtered_df
 
         labels = df["class"].values
+        if "class2" in df.columns:
+            labels_extra = df["class2"].values
+        else:
+            labels_extra = None
         image_names=df['image'].values
+
 
 
     for filename in os.listdir(image_folder):
@@ -488,7 +516,8 @@ def readimagelabel(image_folder,label_path=None):
                     continue
 
                 label = labels[image_names_list.index(filename)]
-                image_label_dict[base_name]=(image,label)
+                label_extra=-1 if labels_extra is None or np.isnan(labels_extra[image_names_list.index(filename)]) else int(labels_extra[image_names_list.index(filename)])
+                image_label_dict[base_name]=(image,label,label_extra)
             # # 预测阶段label没用，训练阶段有用，不需要获取label，所以label随意设置，后续也用不到
             else:
                 label=''
@@ -547,9 +576,9 @@ def resize_with_padding(image, target_size=299):
 
 
 
-def augmente_images(processed_image,name,label,image_label_dict):
-    # rotation_list=[-10,-9,-8,-7,-6,-5,-4, -3, -2, 2,  3, 4,5,6,7,8,9,10]
-    rotation_list = [-4, -3, -2, 2, 3, 4]
+def augmente_images(processed_image,name,label,label_extra,image_label_dict):
+    rotation_list=[-10,-8,-6,-4,  -2, 2,  4,6,8,10]
+    # rotation_list = [-4, -3, -2, 2, 3, 4]
     # cv2.imwrite(f'{name}.png', processed_image)
     # rotation
     for angle in rotation_list:
@@ -557,7 +586,7 @@ def augmente_images(processed_image,name,label,image_label_dict):
         image_center = tuple(np.array(processed_image.shape[1::-1]) / 2)
         rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
         image_rotation = cv2.warpAffine(processed_image, rot_mat, processed_image.shape[1::-1], flags=cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT)
-        image_label_dict[name_current] = (image_rotation, label)
+        image_label_dict[name_current] = (image_rotation, label,label_extra)
         # cv2.imwrite(f'{name_current}.png',image_rotation)
 
     # illumination rescale+shift
@@ -567,28 +596,28 @@ def augmente_images(processed_image,name,label,image_label_dict):
         alpha, beta =pair[0],pair[1]
         image_illumination = processed_image.astype(np.float32) * alpha + beta
         image_illumination=np.clip(image_illumination, 0, 255).astype(np.uint8)
-        image_label_dict[name_current] = (image_illumination, label)
+        image_label_dict[name_current] = (image_illumination, label,label_extra)
         # cv2.imwrite(f'{name_current}.png', image_illumination)
 
 
-    #
-    # for dx, dy in [(-10, 0), (10, 0), (0, -10), (0, 10),(10,10),(-10,-10),(10,-10),(-10,10)]:
-    #     M = np.float32([[1, 0, dx], [0, 1, dy]])
-    #     shifted = cv2.warpAffine(processed_image, M, processed_image.shape[1::-1],
-    #                              borderMode=cv2.BORDER_REFLECT)
-    #     image_label_dict[f"{name}_shift_{dx}_{dy}"] = (shifted, label)
-    #     cv2.imwrite(f"{name}_shift_{dx}_{dy}.png", shifted)
-    #
-    #
-    # blur = cv2.GaussianBlur(processed_image, (5, 5), 0)
-    # image_label_dict[f"{name}_blur"] = (blur, label)
+
+    for dx, dy in [(-10, 0), (10, 0), (0, -10), (0, 10),(10,10),(-10,-10),(10,-10),(-10,10)]:
+        M = np.float32([[1, 0, dx], [0, 1, dy]])
+        shifted = cv2.warpAffine(processed_image, M, processed_image.shape[1::-1],
+                                 borderMode=cv2.BORDER_REFLECT)
+        image_label_dict[f"{name}_shift_{dx}_{dy}"] = (shifted, label,label_extra)
+        # cv2.imwrite(f"{name}_shift_{dx}_{dy}.png", shifted)
+
+
+    blur = cv2.GaussianBlur(processed_image, (5, 5), 0)
+    image_label_dict[f"{name}_blur"] = (blur, label,label_extra)
     # cv2.imwrite(f"{name}_blur.png", blur)
-    #
-    # noise = np.random.normal(0, 10, processed_image.shape).astype(np.int16)
-    # noisy_image = np.clip(processed_image + noise, 0, 255).astype(np.uint8)
-    # image_label_dict[f"{name}_noise"] = (noisy_image, label)
+
+    noise = np.random.normal(0, 10, processed_image.shape).astype(np.int16)
+    noisy_image = np.clip(processed_image + noise, 0, 255).astype(np.uint8)
+    image_label_dict[f"{name}_noise"] = (noisy_image, label,label_extra)
     # cv2.imwrite(f"{name}_noise.png", noisy_image)
-    #
+
 
 
 def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,use_images_generees=False,images_generees_path=None,classes_names=None,num_genere=None):
@@ -599,7 +628,6 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
 
     imagenamelist = [os.path.splitext(i)[0] for i in os.listdir(str(imagedir))]
     scale_list = [0.97, 0.98, 0.99, 1.01, 1.02, 1.03]
-    # scale_list=[0.8,0.9,0.95,0.96,0.97,0.98,1.02,1.03,1.04, 1.05,1.1,1.2]
     # 一张图共16种变化 207*17=3519(原
     for i, name in enumerate(tqdm(imagenamelist, desc=f"Augmente et Calcule mean std des images {set}")):
         try:
@@ -609,16 +637,17 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
             continue
         image = sample[0]
         label = sample[1]
+        label_extra=sample[2]
         # 原图padding
         processed_image = resize_with_padding(image, output_size)
         processed_images.append(processed_image)
         processed_labels.append(label)
-        image_label_dict[name] = (processed_image, label)
+        image_label_dict[name] = (processed_image, label, label_extra)
 
 
         if set=='train':
             # 多种增强
-            augmente_images(processed_image, name, label, image_label_dict)
+            augmente_images(processed_image, name, label,label_extra, image_label_dict)
             # 原图的不同scale
             for scale in scale_list:
                 new_h = int(image.shape[0] * scale)
@@ -626,7 +655,7 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
                 scaled_image = cv2.resize(image, (new_w, new_h) )
                 processed_image = resize_with_padding(scaled_image,output_size)
                 name_current = f'{name}_scale{str(scale)}'
-                image_label_dict[name_current] = (processed_image, label)
+                image_label_dict[name_current] = (processed_image, label,label_extra)
                 # cv2.imwrite(f'{name_current}.png',processed_image)
 
     if set == 'train' and use_images_generees:
@@ -644,7 +673,7 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
                 label = sample[1]
                 # 原图padding
                 processed_image = resize_with_padding(image, output_size)
-                image_label_dict[name] = (processed_image, label)
+                image_label_dict[name] = (processed_image, label,-1)
 
                 virtual_images.append(processed_image)
                 virtual_labels.append(label)
@@ -705,13 +734,19 @@ def apply_augmentations_and_compute_stats(imagedir, output_size, set,label_path,
         logging.info(f"Std in {set}: {std_final}")
 
         # 原dataset
-        X, names, feature_names = get_texture(processed_images, **config_dict)
+        # X, names, feature_names = get_texture(processed_images, **config_dict)
         # tsne降维可视化，532维->2维 dataset2 original
         # visualize_features.tsne(X, np.array(processed_labels), len(classes_names))
         # 单独虚拟图像特征可视化virtual
         # X, names, feature_names = get_texture(virtual_images, **config_dict)
         # # # tsne降维可视化，532维->2维 dataset2 original
         # visualize_features.tsne(X, np.array(virtual_labels), 4)
+        # 原dataset+augmented
+        # image_all = [item[0] for item in image_label_dict.values()]
+        # mask = [item[1] for item in image_label_dict.values()]
+        # X, names, feature_names = get_texture(image_all, **config_dict)
+        # visualize_features.tsne(X, np.array(mask), len(classes_names))
+        a=1
         #原dataset+augmented+virtual
         # image_all = [item[0] for item in image_label_dict.values()]
         # mask = [item[1] for item in image_label_dict.values()]
@@ -804,6 +839,104 @@ def compute_sift_features(image, max_features=100):
     else:
         des = np.pad(des, ((0, max_features - len(des)), (0, 0)), 'constant')
     return des.flatten()
+# def get_texture(batch_images,**kwargs):
+#
+#     # GLCM parameters
+#     distances = kwargs["distances"]
+#     angles = kwargs["angles"]
+#     standardize_glcm_image = kwargs["standardize_glcm_image"]
+#     glcm_levels = kwargs["glcm_levels"]
+#     props = kwargs["props"]
+#
+#     # LBP parameters
+#     ps = kwargs["ps"]
+#     radii = kwargs["radii"]
+#     standardize_lbp_image = kwargs["standardize_lbp_image"]
+#     lbp_levels = kwargs["lbp_levels"]
+#     bins = kwargs["bins"]
+#
+#
+#     X = []
+#     for img in batch_images:
+#         img_gray=rgb_to_gray_array(img)
+#         glcms, bin_image = region_glcm(img_gray, distances, angles, glcm_levels, standardize=standardize_glcm_image)
+#         # 查看量化以及标准化后的bin_image
+#         # plt.figure(figsize=(5, 5))
+#         # plt.subplot(1,2,1)
+#         # plt.imshow(img_gray, cmap='gray')
+#         # plt.title('Gray Image')
+#         # plt.axis('off')
+#         # plt.subplot(1, 2, 2)
+#         # plt.imshow(bin_image, cmap='gray')
+#         # plt.title('Binned Image(bins=12)')
+#         # plt.axis('off')
+#         # plt.show()
+#         # 查看glcm矩阵
+#         distance_index = 0  # 选择第几个距离
+#         angle_index = 0  # 选择第几个角度
+#
+#         # plt.figure(figsize=(6, 6))
+#         # plt.imshow(glcms[:, :, distance_index, angle_index], cmap='hot')
+#         # plt.title(f'GLCM Matrix (distance={distances[distance_index]}, angle={angles[angle_index] * 180 / np.pi:.0f}°)')
+#         # plt.colorbar()
+#         # plt.xlabel('Gray level j')
+#         # plt.ylabel('Gray level i')
+#         # plt.show()
+#         glcm_features = get_glcm_features(glcms, props)
+#
+#         lbps = region_lbp(img_gray, radii, ps, lbp_levels, standardize=standardize_lbp_image)
+#         lbps_features = get_lbp_histograms(lbps, bins)
+#
+#         # for i in range(4):
+#         #     rad=radii[i]
+#         #     p=ps[0]
+#         #     lbp_img = lbps[..., i, 0]
+#         #     plt.figure(figsize=(6, 6))
+#         #     plt.subplot(1,2,1)
+#         #     plt.imshow(img_gray, cmap='gray')
+#         #     plt.title('Gray Image')
+#         #     plt.axis('off')
+#         #     plt.subplot(1, 2, 2)
+#         #     plt.imshow(lbp_img, cmap='gray')
+#         #     plt.title(f'LBP (radius={rad}, p={p})')
+#         #     plt.axis('off')
+#         #     plt.show()
+#
+#
+#         # Wavelet
+#         # wavelet_feats = compute_wavelet_features(img_gray)
+#         # Fractal
+#         # fractal_feat = compute_fractal_dimension(img_gray)
+#         # SIFT
+#         # sift_feat = compute_sift_features(img_gray)
+#
+#         # all_features = np.concatenate([
+#         #     glcm_features[0, :],
+#         #     lbps_features[0, :],
+#         #     wavelet_feats,
+#         #     fractal_feat
+#         # ])
+#         all_features = np.concatenate([
+#             glcm_features[0, :],
+#             lbps_features[0, :],
+#
+#         ])
+#         X.append(all_features)
+#
+#     # dis->angle->prop
+#
+#     # bin->r->p
+#
+#     # glcm_feature_names = get_glcm_feature_names(distances, angles, props)
+#     # lbps_feature_names = get_lbp_feature_names(radii, ps, bins)
+#     # feature_names = glcm_feature_names + lbps_feature_names
+#
+#     X = np.array(X)
+#
+#     # return X, np.array(feature_names)[None, ...]
+#     return X
+
+
 def get_texture(batch_images,**kwargs):
 
     # GLCM parameters
@@ -812,6 +945,7 @@ def get_texture(batch_images,**kwargs):
     standardize_glcm_image = kwargs["standardize_glcm_image"]
     glcm_levels = kwargs["glcm_levels"]
     props = kwargs["props"]
+    glcm_param_list=[distances,angles,standardize_glcm_image,glcm_levels,props]
 
     # LBP parameters
     ps = kwargs["ps"]
@@ -819,55 +953,20 @@ def get_texture(batch_images,**kwargs):
     standardize_lbp_image = kwargs["standardize_lbp_image"]
     lbp_levels = kwargs["lbp_levels"]
     bins = kwargs["bins"]
+    lbp_param_list=[ps,radii,standardize_lbp_image,lbp_levels,bins]
 
-    names = []
     X = []
+
+
     for img in batch_images:
         img_gray=rgb_to_gray_array(img)
-        glcms, bin_image = region_glcm(img_gray, distances, angles, glcm_levels, standardize=standardize_glcm_image)
-        # 查看量化以及标准化后的bin_image
-        # plt.figure(figsize=(5, 5))
-        # plt.subplot(1,2,1)
-        # plt.imshow(img_gray, cmap='gray')
-        # plt.title('Gray Image')
-        # plt.axis('off')
-        # plt.subplot(1, 2, 2)
-        # plt.imshow(bin_image, cmap='gray')
-        # plt.title('Binned Image(bins=12)')
-        # plt.axis('off')
-        # plt.show()
-        # 查看glcm矩阵
-        distance_index = 0  # 选择第几个距离
-        angle_index = 0  # 选择第几个角度
-
-        # plt.figure(figsize=(6, 6))
-        # plt.imshow(glcms[:, :, distance_index, angle_index], cmap='hot')
-        # plt.title(f'GLCM Matrix (distance={distances[distance_index]}, angle={angles[angle_index] * 180 / np.pi:.0f}°)')
-        # plt.colorbar()
-        # plt.xlabel('Gray level j')
-        # plt.ylabel('Gray level i')
-        # plt.show()
-        glcm_features = get_glcm_features(glcms, props)
-
-        lbps = region_lbp(img_gray, radii, ps, lbp_levels, standardize=standardize_lbp_image)
-        lbps_features = get_lbp_histograms(lbps, bins)
-
-        # for i in range(4):
-        #     rad=radii[i]
-        #     p=ps[0]
-        #     lbp_img = lbps[..., i, 0]
-        #     plt.figure(figsize=(6, 6))
-        #     plt.subplot(1,2,1)
-        #     plt.imshow(img_gray, cmap='gray')
-        #     plt.title('Gray Image')
-        #     plt.axis('off')
-        #     plt.subplot(1, 2, 2)
-        #     plt.imshow(lbp_img, cmap='gray')
-        #     plt.title(f'LBP (radius={rad}, p={p})')
-        #     plt.axis('off')
-        #     plt.show()
-
-
+        image, mask,low,high=preprocess_texture_image(img_gray, standardize_lbp_image,standardize_glcm_image)
+        glcm_features =region_glcm_lbp(image,mask,low,high,glcm_levels,'glcm',glcm_param_list,lbp_param_list)
+        # glcms, bin_image = region_glcm(img_gray, distances, angles, glcm_levels, standardize=standardize_glcm_image)
+        # glcm_features = get_glcm_features(glcms, props)
+        lbps_features=region_glcm_lbp(image,mask,low,high,glcm_levels,'lbp',glcm_param_list,lbp_param_list)
+        # lbps = region_lbp(img_gray, radii, ps, lbp_levels, standardize=standardize_lbp_image)
+        # lbps_features = get_lbp_histograms(lbps, bins)
         # Wavelet
         # wavelet_feats = compute_wavelet_features(img_gray)
         # Fractal
@@ -887,21 +986,19 @@ def get_texture(batch_images,**kwargs):
 
         ])
         X.append(all_features)
-        # X.append(np.concatenate((glcm_features[0, :], lbps_features[0, :])))
-    # dis->angle->prop
-    # ['glcm_001px_000deg_contrast', 'glcm_002px_000deg_contrast', 'glcm_003px_000deg_contrast', 'glcm_004px_000deg_contrast', 'glcm_005px_000deg_contrast', 'glcm_006px_000deg_contrast', 'glcm_007px_000deg_contrast', 'glcm_008px_000deg_contrast', 'glcm_009px_000deg_contrast', 'glcm_010px_000deg_contrast', 'glcm_011px_000deg_contrast', 'glcm_012px_000deg_contrast', 'glcm_013px_000deg_contrast', 'glcm_014px_000deg_contrast', 'glcm_015px_000deg_contrast', 'glcm_016px_000deg_contrast', 'glcm_017px_000deg_contrast', 'glcm_018px_000deg_contrast', 'glcm_019px_000deg_contrast', 'glcm_020px_000deg_contrast', 'glcm_021px_000deg_contrast', 'glcm_022px_000deg_contrast', 'glcm_023px_000deg_contrast', 'glcm_024px_000deg_contrast', 'glcm_025px_000deg_contrast', 'glcm_026px_000deg_contrast', 'glcm_027px_000deg_contrast', 'glcm_028px_000deg_contrast', 'glcm_029px_000deg_contrast', 'glcm_030px_000deg_contrast', 'glcm_031px_000deg_contrast', 'glcm_032px_000deg_contrast', 'glcm_033px_000deg_contrast', 'glcm_034px_000deg_contrast', 'glcm_035px_000deg_contrast', 'glcm_036px_000deg_contrast', 'glcm_037px_000deg_contrast', 'glcm_038px_000deg_contrast', 'glcm_039px_000deg_contrast', 'glcm_040px_000deg_contrast', 'glcm_041px_000deg_contrast', 'glcm_042px_000deg_contrast', 'glcm_043px_000deg_contrast', 'glcm_044px_000deg_contrast', 'glcm_045px_000deg_contrast', 'glcm_046px_000deg_contrast', 'glcm_047px_000deg_contrast', 'glcm_048px_000deg_contrast', 'glcm_049px_000deg_contrast', 'glcm_050px_000deg_contrast', 'glcm_001px_090deg_contrast', 'glcm_002px_090deg_contrast', 'glcm_003px_090deg_contrast', 'glcm_004px_090deg_contrast', 'glcm_005px_090deg_contrast', 'glcm_006px_090deg_contrast', 'glcm_007px_090deg_contrast', 'glcm_008px_090deg_contrast', 'glcm_009px_090deg_contrast', 'glcm_010px_090deg_contrast', 'glcm_011px_090deg_contrast', 'glcm_012px_090deg_contrast', 'glcm_013px_090deg_contrast', 'glcm_014px_090deg_contrast', 'glcm_015px_090deg_contrast', 'glcm_016px_090deg_contrast', 'glcm_017px_090deg_contrast', 'glcm_018px_090deg_contrast', 'glcm_019px_090deg_contrast', 'glcm_020px_090deg_contrast', 'glcm_021px_090deg_contrast', 'glcm_022px_090deg_contrast', 'glcm_023px_090deg_contrast', 'glcm_024px_090deg_contrast', 'glcm_025px_090deg_contrast', 'glcm_026px_090deg_contrast', 'glcm_027px_090deg_contrast', 'glcm_028px_090deg_contrast', 'glcm_029px_090deg_contrast', 'glcm_030px_090deg_contrast', 'glcm_031px_090deg_contrast', 'glcm_032px_090deg_contrast', 'glcm_033px_090deg_contrast', 'glcm_034px_090deg_contrast', 'glcm_035px_090deg_contrast', 'glcm_036px_090deg_contrast', 'glcm_037px_090deg_contrast', 'glcm_038px_090deg_contrast', 'glcm_039px_090deg_contrast', 'glcm_040px_090deg_contrast', 'glcm_041px_090deg_contrast', 'glcm_042px_090deg_contrast', 'glcm_043px_090deg_contrast', 'glcm_044px_090deg_contrast', 'glcm_045px_090deg_contrast', 'glcm_046px_090deg_contrast', 'glcm_047px_090deg_contrast', 'glcm_048px_090deg_contrast', 'glcm_049px_090deg_contrast', 'glcm_050px_090deg_contrast', 'glcm_001px_000deg_dissimilarity', 'glcm_002px_000deg_dissimilarity', 'glcm_003px_000deg_dissimilarity', 'glcm_004px_000deg_dissimilarity', 'glcm_005px_000deg_dissimilarity', 'glcm_006px_000deg_dissimilarity', 'glcm_007px_000deg_dissimilarity', 'glcm_008px_000deg_dissimilarity', 'glcm_009px_000deg_dissimilarity', 'glcm_010px_000deg_dissimilarity', 'glcm_011px_000deg_dissimilarity', 'glcm_012px_000deg_dissimilarity', 'glcm_013px_000deg_dissimilarity', 'glcm_014px_000deg_dissimilarity', 'glcm_015px_000deg_dissimilarity', 'glcm_016px_000deg_dissimilarity', 'glcm_017px_000deg_dissimilarity', 'glcm_018px_000deg_dissimilarity', 'glcm_019px_000deg_dissimilarity', 'glcm_020px_000deg_dissimilarity', 'glcm_021px_000deg_dissimilarity', 'glcm_022px_000deg_dissimilarity', 'glcm_023px_000deg_dissimilarity', 'glcm_024px_000deg_dissimilarity', 'glcm_025px_000deg_dissimilarity', 'glcm_026px_000deg_dissimilarity', 'glcm_027px_000deg_dissimilarity', 'glcm_028px_000deg_dissimilarity', 'glcm_029px_000deg_dissimilarity', 'glcm_030px_000deg_dissimilarity', 'glcm_031px_000deg_dissimilarity', 'glcm_032px_000deg_dissimilarity', 'glcm_033px_000deg_dissimilarity', 'glcm_034px_000deg_dissimilarity', 'glcm_035px_000deg_dissimilarity', 'glcm_036px_000deg_dissimilarity', 'glcm_037px_000deg_dissimilarity', 'glcm_038px_000deg_dissimilarity', 'glcm_039px_000deg_dissimilarity', 'glcm_040px_000deg_dissimilarity', 'glcm_041px_000deg_dissimilarity', 'glcm_042px_000deg_dissimilarity', 'glcm_043px_000deg_dissimilarity', 'glcm_044px_000deg_dissimilarity', 'glcm_045px_000deg_dissimilarity', 'glcm_046px_000deg_dissimilarity', 'glcm_047px_000deg_dissimilarity', 'glcm_048px_000deg_dissimilarity', 'glcm_049px_000deg_dissimilarity', 'glcm_050px_000deg_dissimilarity', 'glcm_001px_090deg_dissimilarity', 'glcm_002px_090deg_dissimilarity', 'glcm_003px_090deg_dissimilarity', 'glcm_004px_090deg_dissimilarity', 'glcm_005px_090deg_dissimilarity', 'glcm_006px_090deg_dissimilarity', 'glcm_007px_090deg_dissimilarity', 'glcm_008px_090deg_dissimilarity', 'glcm_009px_090deg_dissimilarity', 'glcm_010px_090deg_dissimilarity', 'glcm_011px_090deg_dissimilarity', 'glcm_012px_090deg_dissimilarity', 'glcm_013px_090deg_dissimilarity', 'glcm_014px_090deg_dissimilarity', 'glcm_015px_090deg_dissimilarity', 'glcm_016px_090deg_dissimilarity', 'glcm_017px_090deg_dissimilarity', 'glcm_018px_090deg_dissimilarity', 'glcm_019px_090deg_dissimilarity', 'glcm_020px_090deg_dissimilarity', 'glcm_021px_090deg_dissimilarity', 'glcm_022px_090deg_dissimilarity', 'glcm_023px_090deg_dissimilarity', 'glcm_024px_090deg_dissimilarity', 'glcm_025px_090deg_dissimilarity', 'glcm_026px_090deg_dissimilarity', 'glcm_027px_090deg_dissimilarity', 'glcm_028px_090deg_dissimilarity', 'glcm_029px_090deg_dissimilarity', 'glcm_030px_090deg_dissimilarity', 'glcm_031px_090deg_dissimilarity', 'glcm_032px_090deg_dissimilarity', 'glcm_033px_090deg_dissimilarity', 'glcm_034px_090deg_dissimilarity', 'glcm_035px_090deg_dissimilarity', 'glcm_036px_090deg_dissimilarity', 'glcm_037px_090deg_dissimilarity', 'glcm_038px_090deg_dissimilarity', 'glcm_039px_090deg_dissimilarity', 'glcm_040px_090deg_dissimilarity', 'glcm_041px_090deg_dissimilarity', 'glcm_042px_090deg_dissimilarity', 'glcm_043px_090deg_dissimilarity', 'glcm_044px_090deg_dissimilarity', 'glcm_045px_090deg_dissimilarity', 'glcm_046px_090deg_dissimilarity', 'glcm_047px_090deg_dissimilarity', 'glcm_048px_090deg_dissimilarity', 'glcm_049px_090deg_dissimilarity', 'glcm_050px_090deg_dissimilarity', 'glcm_001px_000deg_homogeneity', 'glcm_002px_000deg_homogeneity', 'glcm_003px_000deg_homogeneity', 'glcm_004px_000deg_homogeneity', 'glcm_005px_000deg_homogeneity', 'glcm_006px_000deg_homogeneity', 'glcm_007px_000deg_homogeneity', 'glcm_008px_000deg_homogeneity', 'glcm_009px_000deg_homogeneity', 'glcm_010px_000deg_homogeneity', 'glcm_011px_000deg_homogeneity', 'glcm_012px_000deg_homogeneity', 'glcm_013px_000deg_homogeneity', 'glcm_014px_000deg_homogeneity', 'glcm_015px_000deg_homogeneity', 'glcm_016px_000deg_homogeneity', 'glcm_017px_000deg_homogeneity', 'glcm_018px_000deg_homogeneity', 'glcm_019px_000deg_homogeneity', 'glcm_020px_000deg_homogeneity', 'glcm_021px_000deg_homogeneity', 'glcm_022px_000deg_homogeneity', 'glcm_023px_000deg_homogeneity', 'glcm_024px_000deg_homogeneity', 'glcm_025px_000deg_homogeneity', 'glcm_026px_000deg_homogeneity', 'glcm_027px_000deg_homogeneity', 'glcm_028px_000deg_homogeneity', 'glcm_029px_000deg_homogeneity', 'glcm_030px_000deg_homogeneity', 'glcm_031px_000deg_homogeneity', 'glcm_032px_000deg_homogeneity', 'glcm_033px_000deg_homogeneity', 'glcm_034px_000deg_homogeneity', 'glcm_035px_000deg_homogeneity', 'glcm_036px_000deg_homogeneity', 'glcm_037px_000deg_homogeneity', 'glcm_038px_000deg_homogeneity', 'glcm_039px_000deg_homogeneity', 'glcm_040px_000deg_homogeneity', 'glcm_041px_000deg_homogeneity', 'glcm_042px_000deg_homogeneity', 'glcm_043px_000deg_homogeneity', 'glcm_044px_000deg_homogeneity', 'glcm_045px_000deg_homogeneity', 'glcm_046px_000deg_homogeneity', 'glcm_047px_000deg_homogeneity', 'glcm_048px_000deg_homogeneity', 'glcm_049px_000deg_homogeneity', 'glcm_050px_000deg_homogeneity', 'glcm_001px_090deg_homogeneity', 'glcm_002px_090deg_homogeneity', 'glcm_003px_090deg_homogeneity', 'glcm_004px_090deg_homogeneity', 'glcm_005px_090deg_homogeneity', 'glcm_006px_090deg_homogeneity', 'glcm_007px_090deg_homogeneity', 'glcm_008px_090deg_homogeneity', 'glcm_009px_090deg_homogeneity', 'glcm_010px_090deg_homogeneity', 'glcm_011px_090deg_homogeneity', 'glcm_012px_090deg_homogeneity', 'glcm_013px_090deg_homogeneity', 'glcm_014px_090deg_homogeneity', 'glcm_015px_090deg_homogeneity', 'glcm_016px_090deg_homogeneity', 'glcm_017px_090deg_homogeneity', 'glcm_018px_090deg_homogeneity', 'glcm_019px_090deg_homogeneity', 'glcm_020px_090deg_homogeneity', 'glcm_021px_090deg_homogeneity', 'glcm_022px_090deg_homogeneity', 'glcm_023px_090deg_homogeneity', 'glcm_024px_090deg_homogeneity', 'glcm_025px_090deg_homogeneity', 'glcm_026px_090deg_homogeneity', 'glcm_027px_090deg_homogeneity', 'glcm_028px_090deg_homogeneity', 'glcm_029px_090deg_homogeneity', 'glcm_030px_090deg_homogeneity', 'glcm_031px_090deg_homogeneity', 'glcm_032px_090deg_homogeneity', 'glcm_033px_090deg_homogeneity', 'glcm_034px_090deg_homogeneity', 'glcm_035px_090deg_homogeneity', 'glcm_036px_090deg_homogeneity', 'glcm_037px_090deg_homogeneity', 'glcm_038px_090deg_homogeneity', 'glcm_039px_090deg_homogeneity', 'glcm_040px_090deg_homogeneity', 'glcm_041px_090deg_homogeneity', 'glcm_042px_090deg_homogeneity', 'glcm_043px_090deg_homogeneity', 'glcm_044px_090deg_homogeneity', 'glcm_045px_090deg_homogeneity', 'glcm_046px_090deg_homogeneity', 'glcm_047px_090deg_homogeneity', 'glcm_048px_090deg_homogeneity', 'glcm_049px_090deg_homogeneity', 'glcm_050px_090deg_homogeneity', 'glcm_001px_000deg_energy', 'glcm_002px_000deg_energy', 'glcm_003px_000deg_energy', 'glcm_004px_000deg_energy', 'glcm_005px_000deg_energy', 'glcm_006px_000deg_energy', 'glcm_007px_000deg_energy', 'glcm_008px_000deg_energy', 'glcm_009px_000deg_energy', 'glcm_010px_000deg_energy', 'glcm_011px_000deg_energy', 'glcm_012px_000deg_energy', 'glcm_013px_000deg_energy', 'glcm_014px_000deg_energy', 'glcm_015px_000deg_energy', 'glcm_016px_000deg_energy', 'glcm_017px_000deg_energy', 'glcm_018px_000deg_energy', 'glcm_019px_000deg_energy', 'glcm_020px_000deg_energy', 'glcm_021px_000deg_energy', 'glcm_022px_000deg_energy', 'glcm_023px_000deg_energy', 'glcm_024px_000deg_energy', 'glcm_025px_000deg_energy', 'glcm_026px_000deg_energy', 'glcm_027px_000deg_energy', 'glcm_028px_000deg_energy', 'glcm_029px_000deg_energy', 'glcm_030px_000deg_energy', 'glcm_031px_000deg_energy', 'glcm_032px_000deg_energy', 'glcm_033px_000deg_energy', 'glcm_034px_000deg_energy', 'glcm_035px_000deg_energy', 'glcm_036px_000deg_energy', 'glcm_037px_000deg_energy', 'glcm_038px_000deg_energy', 'glcm_039px_000deg_energy', 'glcm_040px_000deg_energy', 'glcm_041px_000deg_energy', 'glcm_042px_000deg_energy', 'glcm_043px_000deg_energy', 'glcm_044px_000deg_energy', 'glcm_045px_000deg_energy', 'glcm_046px_000deg_energy', 'glcm_047px_000deg_energy', 'glcm_048px_000deg_energy', 'glcm_049px_000deg_energy', 'glcm_050px_000deg_energy', 'glcm_001px_090deg_energy', 'glcm_002px_090deg_energy', 'glcm_003px_090deg_energy', 'glcm_004px_090deg_energy', 'glcm_005px_090deg_energy', 'glcm_006px_090deg_energy', 'glcm_007px_090deg_energy', 'glcm_008px_090deg_energy', 'glcm_009px_090deg_energy', 'glcm_010px_090deg_energy', 'glcm_011px_090deg_energy', 'glcm_012px_090deg_energy', 'glcm_013px_090deg_energy', 'glcm_014px_090deg_energy', 'glcm_015px_090deg_energy', 'glcm_016px_090deg_energy', 'glcm_017px_090deg_energy', 'glcm_018px_090deg_energy', 'glcm_019px_090deg_energy', 'glcm_020px_090deg_energy', 'glcm_021px_090deg_energy', 'glcm_022px_090deg_energy', 'glcm_023px_090deg_energy', 'glcm_024px_090deg_energy', 'glcm_025px_090deg_energy', 'glcm_026px_090deg_energy', 'glcm_027px_090deg_energy', 'glcm_028px_090deg_energy', 'glcm_029px_090deg_energy', 'glcm_030px_090deg_energy', 'glcm_031px_090deg_energy', 'glcm_032px_090deg_energy', 'glcm_033px_090deg_energy', 'glcm_034px_090deg_energy', 'glcm_035px_090deg_energy', 'glcm_036px_090deg_energy', 'glcm_037px_090deg_energy', 'glcm_038px_090deg_energy', 'glcm_039px_090deg_energy', 'glcm_040px_090deg_energy', 'glcm_041px_090deg_energy', 'glcm_042px_090deg_energy', 'glcm_043px_090deg_energy', 'glcm_044px_090deg_energy', 'glcm_045px_090deg_energy', 'glcm_046px_090deg_energy', 'glcm_047px_090deg_energy', 'glcm_048px_090deg_energy', 'glcm_049px_090deg_energy', 'glcm_050px_090deg_energy', 'glcm_001px_000deg_correlation', 'glcm_002px_000deg_correlation', 'glcm_003px_000deg_correlation', 'glcm_004px_000deg_correlation', 'glcm_005px_000deg_correlation', 'glcm_006px_000deg_correlation', 'glcm_007px_000deg_correlation', 'glcm_008px_000deg_correlation', 'glcm_009px_000deg_correlation', 'glcm_010px_000deg_correlation', 'glcm_011px_000deg_correlation', 'glcm_012px_000deg_correlation', 'glcm_013px_000deg_correlation', 'glcm_014px_000deg_correlation', 'glcm_015px_000deg_correlation', 'glcm_016px_000deg_correlation', 'glcm_017px_000deg_correlation', 'glcm_018px_000deg_correlation', 'glcm_019px_000deg_correlation', 'glcm_020px_000deg_correlation', 'glcm_021px_000deg_correlation', 'glcm_022px_000deg_correlation', 'glcm_023px_000deg_correlation', 'glcm_024px_000deg_correlation', 'glcm_025px_000deg_correlation', 'glcm_026px_000deg_correlation', 'glcm_027px_000deg_correlation', 'glcm_028px_000deg_correlation', 'glcm_029px_000deg_correlation', 'glcm_030px_000deg_correlation', 'glcm_031px_000deg_correlation', 'glcm_032px_000deg_correlation', 'glcm_033px_000deg_correlation', 'glcm_034px_000deg_correlation', 'glcm_035px_000deg_correlation', 'glcm_036px_000deg_correlation', 'glcm_037px_000deg_correlation', 'glcm_038px_000deg_correlation', 'glcm_039px_000deg_correlation', 'glcm_040px_000deg_correlation', 'glcm_041px_000deg_correlation', 'glcm_042px_000deg_correlation', 'glcm_043px_000deg_correlation', 'glcm_044px_000deg_correlation', 'glcm_045px_000deg_correlation', 'glcm_046px_000deg_correlation', 'glcm_047px_000deg_correlation', 'glcm_048px_000deg_correlation', 'glcm_049px_000deg_correlation', 'glcm_050px_000deg_correlation', 'glcm_001px_090deg_correlation', 'glcm_002px_090deg_correlation', 'glcm_003px_090deg_correlation', 'glcm_004px_090deg_correlation', 'glcm_005px_090deg_correlation', 'glcm_006px_090deg_correlation', 'glcm_007px_090deg_correlation', 'glcm_008px_090deg_correlation', 'glcm_009px_090deg_correlation', 'glcm_010px_090deg_correlation', 'glcm_011px_090deg_correlation', 'glcm_012px_090deg_correlation', 'glcm_013px_090deg_correlation', 'glcm_014px_090deg_correlation', 'glcm_015px_090deg_correlation', 'glcm_016px_090deg_correlation', 'glcm_017px_090deg_correlation', 'glcm_018px_090deg_correlation', 'glcm_019px_090deg_correlation', 'glcm_020px_090deg_correlation', 'glcm_021px_090deg_correlation', 'glcm_022px_090deg_correlation', 'glcm_023px_090deg_correlation', 'glcm_024px_090deg_correlation', 'glcm_025px_090deg_correlation', 'glcm_026px_090deg_correlation', 'glcm_027px_090deg_correlation', 'glcm_028px_090deg_correlation', 'glcm_029px_090deg_correlation', 'glcm_030px_090deg_correlation', 'glcm_031px_090deg_correlation', 'glcm_032px_090deg_correlation', 'glcm_033px_090deg_correlation', 'glcm_034px_090deg_correlation', 'glcm_035px_090deg_correlation', 'glcm_036px_090deg_correlation', 'glcm_037px_090deg_correlation', 'glcm_038px_090deg_correlation', 'glcm_039px_090deg_correlation', 'glcm_040px_090deg_correlation', 'glcm_041px_090deg_correlation', 'glcm_042px_090deg_correlation', 'glcm_043px_090deg_correlation', 'glcm_044px_090deg_correlation', 'glcm_045px_090deg_correlation', 'glcm_046px_090deg_correlation', 'glcm_047px_090deg_correlation', 'glcm_048px_090deg_correlation', 'glcm_049px_090deg_correlation', 'glcm_050px_090deg_correlation']
-    # bin->r->p
-    # ['lbp_radius01_p08_bin000', 'lbp_radius01_p08_bin001', 'lbp_radius01_p08_bin002', 'lbp_radius01_p08_bin003', 'lbp_radius01_p08_bin004', 'lbp_radius01_p08_bin005', 'lbp_radius01_p08_bin006', 'lbp_radius01_p08_bin007', 'lbp_radius11_p08_bin000', 'lbp_radius11_p08_bin001', 'lbp_radius11_p08_bin002', 'lbp_radius11_p08_bin003', 'lbp_radius11_p08_bin004', 'lbp_radius11_p08_bin005', 'lbp_radius11_p08_bin006', 'lbp_radius11_p08_bin007', 'lbp_radius21_p08_bin000', 'lbp_radius21_p08_bin001', 'lbp_radius21_p08_bin002', 'lbp_radius21_p08_bin003', 'lbp_radius21_p08_bin004', 'lbp_radius21_p08_bin005', 'lbp_radius21_p08_bin006', 'lbp_radius21_p08_bin007', 'lbp_radius31_p08_bin000', 'lbp_radius31_p08_bin001', 'lbp_radius31_p08_bin002', 'lbp_radius31_p08_bin003', 'lbp_radius31_p08_bin004', 'lbp_radius31_p08_bin005', 'lbp_radius31_p08_bin006', 'lbp_radius31_p08_bin007']
 
-    glcm_feature_names = get_glcm_feature_names(distances, angles, props)
-    lbps_feature_names = get_lbp_feature_names(radii, ps, bins)
-    feature_names = glcm_feature_names + lbps_feature_names
-    names = np.array(names)
+    # dis->angle->prop
+
+    # bin->r->p
+
+    # glcm_feature_names = get_glcm_feature_names(distances, angles, props)
+    # lbps_feature_names = get_lbp_feature_names(radii, ps, bins)
+    # feature_names = glcm_feature_names + lbps_feature_names
+
     X = np.array(X)
 
 
-
-    return X, names, np.array(feature_names)[None, ...]
+    return X
 def apply_augmentations_and_compute_stats_pred(imagedir, output_size, set):
     image_label_dict = readimagelabel(imagedir)
 

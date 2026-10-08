@@ -247,20 +247,21 @@ def run_one_epoch(
 
         if step == "Training":
             if model_name == 'midfusionmodel':
-                index += 1
-                gate_mean = gate.mean().item()
-                scale_val = scale.item()
-                epoch_gate_list.append(gate_mean)
-                epoch_scale_list.append(scale_val)
-                if index % log_interval == 0:
-                    with open(log_path, "a") as f:
-                        f.write(
-                            f"training epoch {epoch}, step {index}, "
-                            f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
-                        )
-            loss = params["criterion"](output, data["label"].to(device))
+                if gate is not None and scale is not None:
+                    index += 1
+                    gate_mean = gate.mean().item()
+                    scale_val = scale.item()
+                    epoch_gate_list.append(gate_mean)
+                    epoch_scale_list.append(scale_val)
+                    if index % log_interval == 0:
+                        with open(log_path, "a") as f:
+                            f.write(
+                                f"training epoch {epoch}, step {index}, "
+                                f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
+                            )
+            loss = params["criterion"](output, data["label"].to(device),data["label_extra"].to(device))
         else:
-            loss = params["criterion_val"](output, data["label"].to(device))
+            loss = params["criterion_val"](output, data["label"].to(device),data["label_extra"].to(device))
 
 
 
@@ -320,16 +321,17 @@ def run_one_epoch(
             logging.info(f"Terminer les {accumulation_counter} tours restants de gradient d'accumulation")
 
     if step == "Training":
-        if model_name == 'midfusionmodel' and len(epoch_gate_list) > 0:
-            epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
-            epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
+        if model_name == 'midfusionmodel':
+            if gate is not None and scale is not None and len(epoch_gate_list) > 0:
+                epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
+                epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
 
-            with open(log_path, "a") as f:
-                f.write(
-                    f"[Training Epoch {epoch} Summary] "
-                    f"gate_mean {epoch_gate_mean:.6f}, "
-                    f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
-                )
+                with open(log_path, "a") as f:
+                    f.write(
+                        f"[Training Epoch {epoch} Summary] "
+                        f"gate_mean {epoch_gate_mean:.6f}, "
+                        f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
+                    )
         return params, epoch_values
     else:
         return epoch_values
@@ -562,141 +564,6 @@ def find_lr(train_dataloader,tr_params,device,batchsize,init_value = 1e-4, final
         optimizer.param_groups[0]['lr'] = lr
     return log_lrs, losses,original_losses
 
-# alltrain
-# def run(
-#     model_path: str,
-#     log_path: str,
-#     tb_path: str,
-#     no_of_epochs: int,
-#     norm_params: dict,
-#     classes_names: list,
-#     loaders: dict,
-#     tr_params: dict,
-#     batchsize:int,
-#     desired_batchsize:int,
-#     learning_rate,
-#     use_gpu,
-#     model_name
-# ):
-#     if use_gpu:
-#         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-#     else:
-#         device = torch.device("cpu")
-#
-#     plateau_scheduler = ReduceLROnPlateau(
-#         tr_params["optimizer"],
-#         mode='min',
-#         factor=0.1,
-#         patience=25,
-#         verbose=True,
-#         min_lr=1e-7,
-#     )
-#
-#
-#     writer = SummaryWriter(os.path.join(log_path, tb_path))
-#     logging.info("Starting training")
-#     starting_time = time.time()
-#
-#
-#
-#
-#     #  创建optimizer时把model.parameters() 里的 所有参数 放进了一个默认的 param group。
-#     for i, group in enumerate(tr_params["optimizer"].param_groups):
-#         print(f"[Group {i}] lr = {group['lr']}")
-#
-#     for epoch in range(1, no_of_epochs + 1):
-#
-#         current_epoch = epoch + tr_params["saved_epoch"]
-#         # Run training.
-#         tr_params["net"].train()
-#         tr_params, epoch_values = run_one_epoch(
-#             loaders["train"],
-#             tr_params,
-#             writer,
-#             [current_epoch, tr_params["saved_epoch"]],
-#             no_of_epochs,
-#             device,
-#             norm_params["train"],
-#             classes_names,
-#             batchsize,
-#             desired_batchsize,
-#             log_path,
-#             step="Training",
-#
-#         )
-#
-#         log_metrics(
-#             epoch=current_epoch,
-#             metrics=epoch_values,
-#             writer=writer,
-#             learning_rate=learning_rate,
-#             step="Training",
-#         )
-#
-#         # 尝试：学习率固定衰减
-#         #  lr_ = base_lr * (1.0 - iter_num / max_iterations) ** 0.9
-#
-#         # 更新学习率调度器
-#         plateau_scheduler.step(epoch_values["loss"])
-#
-#         # # 更新学习率
-#         # scheduler.step()
-#         learning_rate = tr_params["optimizer"].param_groups[0]['lr']
-#         logging.info(f"Learning rate now is {learning_rate}")
-#
-#         # if learning_rate<=0.0001:
-#         #     controller.unfreez_all()
-#
-#         # # 早停策略
-#         # early_stopping(epoch_values["loss"])
-#         # if early_stopping.stop_training:
-#         #     logging.info(f"Early stopping at epoch {current_epoch}")
-#         #     print(f"Early stopping at epoch {current_epoch}")
-#         #     break
-#
-#         if model_path is not None:
-#             model_last_path = (log_path / model_path).with_name("model_last.pth")
-#             model_best_path = (log_path / model_path).with_name("model_best.pth")
-#         else:
-#             model_last_path = log_path / "texture_model/model_last.pth"
-#             model_best_path = log_path / "texture_model/model_best.pth"
-#
-#         if not os.path.exists(model_last_path.parent):
-#             os.makedirs(model_last_path.parent)
-#
-#         # 每一轮都保存当前模型，覆盖 model_last.pth
-#         model.save_model(
-#             current_epoch + 1,
-#             tr_params["net"].state_dict(),
-#             epoch_values["loss"],
-#             tr_params["optimizer"].state_dict(),
-#             tr_params["scaler"].state_dict(),
-#             model_last_path,
-#         )
-#         logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
-#
-#         # 判断是否为最佳模型，保存为 model_best.pth
-#         if epoch_values["loss"] < tr_params["best_loss"]:
-#             tr_params["best_loss"] = epoch_values["loss"]
-#
-#             model.save_model(
-#                 current_epoch + 1,
-#                 tr_params["net"].state_dict(),
-#                 epoch_values["loss"],
-#                 tr_params["optimizer"].state_dict(),
-#                 tr_params["scaler"].state_dict(),
-#                 model_best_path,
-#             )
-#             logging.info("Best model (epoch %d) saved to %s", current_epoch + 1, model_best_path)
-#
-#
-#
-#
-#     end = time.gmtime(time.time() - starting_time)
-#     logging.info(
-#         "Finished training in %2d:%2d:%2d", end.tm_hour, end.tm_min, end.tm_sec
-#     )
-
 
 def run(
     model_path: str,
@@ -755,7 +622,7 @@ def run(
         mode='min',
         factor=0.1,
         patience=15,
-        verbose=True,
+        # verbose=True,
         min_lr=1e-7,
     )
 
@@ -889,68 +756,28 @@ def run(
             if early_stopping.stop_training:
                 logging.info(f"Early stopping at epoch {current_epoch}")
                 print(f"Early stopping at epoch {current_epoch}")
+                loss=epoch_values["loss"]
+                model_last_path = save_dir / f"model_last_{current_epoch}_loss_{loss:.4f}.pth"
 
-                # if model_path is not None:
-                #     model_path = Path(model_path)
-                #     save_dir = (log_path / model_path).parent
-                # else:
-                #     save_dir = log_path
-                #
-                # save_dir.mkdir(parents=True, exist_ok=True)
-                #
-                # model_last_path = save_dir / "model_last.pth"
-                #
-                # # 每一轮都保存当前模型，覆盖 model_last.pth
-                # model.save_model(
-                #     current_epoch + 1,
-                #     tr_params["net"].state_dict(),
-                #     epoch_values["loss"],
-                #     tr_params["optimizer"].state_dict(),
-                #     tr_params["scaler"].state_dict(),
-                #     model_last_path,
-                # )
-                # logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
+                #最后一轮保存前打印lr
+                optimizer_state = tr_params["optimizer"].state_dict()
+                print(
+                    "BEFORE SAVE:",
+                    optimizer_state["param_groups"][0]["lr"]
+                )
+
+                model.save_model(
+                    current_epoch,
+                    tr_params["net"].state_dict(),
+                    epoch_values["loss"],
+                    tr_params["optimizer"].state_dict(),
+                    tr_params["scaler"].state_dict(),
+                    model_last_path,
+                )
+                logging.info("Latest model (epoch %d) saved to %s", current_epoch , model_last_path)
 
 
                 break
-
-
-            # if model_path is not None:
-            #     model_path = Path(model_path)
-            #     save_dir = (log_path / model_path).parent
-            # else:
-            #     save_dir = log_path
-            #
-            # save_dir.mkdir(parents=True, exist_ok=True)
-            #
-            # model_last_path = save_dir / "model_last.pth"
-            # model_best_path = save_dir / "model_best.pth"
-            #
-            # # 每一轮都保存当前模型，覆盖 model_last.pth
-            # model.save_model(
-            #     current_epoch + 1,
-            #     tr_params["net"].state_dict(),
-            #     epoch_values["loss"],
-            #     tr_params["optimizer"].state_dict(),
-            #     tr_params["scaler"].state_dict(),
-            #     model_last_path,
-            # )
-            # logging.info("Latest model (epoch %d) saved to %s", current_epoch + 1, model_last_path)
-            #
-            # # 判断是否为最佳模型，保存为 model_best.pth
-            # if epoch_values["loss"] < tr_params["best_loss"]:
-            #     tr_params["best_loss"] = epoch_values["loss"]
-            #
-            #     model.save_model(
-            #         current_epoch + 1,
-            #         tr_params["net"].state_dict(),
-            #         epoch_values["loss"],
-            #         tr_params["optimizer"].state_dict(),
-            #         tr_params["scaler"].state_dict(),
-            #         model_best_path,
-            #     )
-            #     logging.info("Best model (epoch %d) saved to %s", current_epoch + 1, model_best_path)
-
 
 
     end = time.gmtime(time.time() - starting_time)

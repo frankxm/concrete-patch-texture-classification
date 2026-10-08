@@ -66,6 +66,7 @@ def parse_configurations(config_file: Path):
             get_path('Paths', 'model_path3'),
             get_path('Paths', 'model_path4'),
             get_path('Paths', 'model_path5'),
+            get_path('Paths', 'model_path6'),
         ],
         'prediction_path': get_path('Paths', 'prediction_path', 'prediction'),
         'evaluation_path': get_path('Paths', 'evaluation_path', 'evaluation'),

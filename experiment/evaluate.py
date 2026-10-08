@@ -40,86 +40,33 @@ filtered_label_evaluation
     df_pred["image_base"] = df_pred["image"].apply(lambda x: os.path.splitext(x)[0])
     df_pred.set_index("image_base", inplace=True)
 
-    cols_to_join = [c for c in ["class", "class2"] if c in df.columns]
+    cols_to_join = [c for c in ["class", "class2","vue","qualite"] if c in df.columns]
 
+    # df_all = df_pred.join(
+    #     df[cols_to_join],
+    #     how="inner",
+    #     rsuffix="_gt"
+    # )
     df_all = df_pred.join(
-        df[cols_to_join],
-        how="inner",
-        rsuffix="_gt"
+        df[cols_to_join].add_suffix("_gt"),
+        how="inner"
     )
 
-    if filtered_label_evaluation is None:
-        df_valid = df_all
-        gt_labels = df_valid["class_gt"].values
-
-        prediction_labels = df_valid["class"].values
-    else:
-        # 这里滤除filter_class in class1_gt，并且没有class2_gt的样本
-        # 本质上是单标签
-        mask_filtered = df_all["class_gt"] == filtered_label_evaluation
-        mask_has_class2 = df_all["class2_gt"].notna()
-        mask_keep = ~(mask_filtered & ~mask_has_class2)
-
-        df_valid = df_all.loc[mask_keep]
-        # 把gt_labels设为label2
-        gt_labels = df_valid["class_gt"].where(
-            df_valid["class_gt"] != filtered_label_evaluation,
-            df_valid["class2_gt"]
-        ).values
-
-        prediction_labels = df_valid["class"].values
-
-    from sklearn.utils.multiclass import unique_labels
-    labels_in_subset = unique_labels(gt_labels, prediction_labels)
-    labels_classes = [ground_classes_names[int(i)] for i in labels_in_subset]
-
-    # 考虑多标签评估
-    gt1 = df_valid["class_gt"].values
-    gt2 = df_valid["class2_gt"].values if "class2_gt" in df_valid.columns else None
-    pred = df_valid["class"].values
-    strict_acc = compute_strict_accuracy(gt1, pred)
-    tolerant_acc = compute_tolerant_accuracy(gt1, gt2, pred)
-    soft_acc = compute_soft_accuracy(gt1, gt2, pred, w_secondary=0.5)
 
 
-    metrics['strict_acc'] = round(strict_acc, 4)
-    metrics['tolerant_acc'] = round(tolerant_acc, 4)
-    metrics['soft_acc'] = round(soft_acc, 4)
 
-    evaluate_subset("global", gt_labels, prediction_labels, labels_classes, metrics, evaluation_path)
-
+    evaluate_subset_df(df_all,'global',metrics,ground_classes_names,evaluation_path,filtered_label_evaluation)
+    ######视角，清晰度，用于terre
     #
-    # # #####不同视角/不同清晰度
-    # eval_df = pd.DataFrame({
-    #     "image": test_image_names,
-    #     "gt": gt_labels,
-    #     "pred": prediction_labels,
-    #     "vue": [df.loc[img, "vue"] for img in test_image_names],
-    #     "qualite": [df.loc[img, "qualite"] for img in test_image_names],
-    # })
+    # for v in ["dessus", "laterale"]:
+    #     df_v = df_all[df_all["vue"] == v]
+    #     if len(df_v) > 0:
+    #         evaluate_subset_df(df_v, f"vue_{v}",metrics,ground_classes_names,evaluation_path,filtered_label_evaluation)
     #
-    # for vue_value in eval_df["vue"].unique():
-    #     sub_df = eval_df[eval_df["vue"] == vue_value]
-    #     confusion_matrix_save_path=os.path.join(evaluation_path,f'{vue_value}')
-    #     subset_gt = sub_df["gt"].values
-    #     subset_pred = sub_df["pred"].values
-    #     from sklearn.utils.multiclass import unique_labels
-    #     labels_in_subset = unique_labels(subset_gt, subset_pred)
-    #     labels_classes = [ground_classes_names[int(i)] for i in labels_in_subset]
-    #     evaluate_subset(f"vue={vue_value}", subset_gt, subset_pred, labels_classes, metrics, confusion_matrix_save_path)
-    #
-    # for q_value in eval_df["qualite"].unique():
-    #     sub_df = eval_df[eval_df["qualite"] == q_value]
-    #     confusion_matrix_save_path=os.path.join(evaluation_path,f'{q_value}')
-    #     subset_gt = sub_df["gt"].values
-    #     subset_pred = sub_df["pred"].values
-    #     from sklearn.utils.multiclass import unique_labels
-    #     labels_in_subset = unique_labels(subset_gt, subset_pred)
-    #     labels_classes = [ground_classes_names[int(i)] for i in labels_in_subset]
-    #     evaluate_subset(f"qualite={q_value}", subset_gt, subset_pred, labels_classes, metrics, confusion_matrix_save_path)
-    #
-    #
-
+    # for q in ["flou", "clair"]:
+    #     df_q = df_all[df_all["qualite"] == q]
+    #     if len(df_q) > 0:
+    #         evaluate_subset_df(df_q, f"qualite_{q}",metrics,ground_classes_names,evaluation_path,filtered_label_evaluation)
 
 
 
@@ -127,6 +74,62 @@ filtered_label_evaluation
     logging.info(
         "Finished evaluating in %2d:%2d:%2d", end.tm_hour, end.tm_min, end.tm_sec
     )
+
+def evaluate_subset_df(df_subset, name,metrics,ground_classes_names,evaluation_path,filtered_label_evaluation):
+
+    if filtered_label_evaluation is None:
+        df_valid = df_subset
+        gt_labels = df_valid["class_gt"].values
+    else:
+        # 这里滤除filter_class in class1_gt，并且没有class2_gt的样本
+        # 本质上是单标签
+        mask_filtered = df_subset["class_gt"] == filtered_label_evaluation
+        mask_has_class2 = df_subset["class2_gt"].notna()
+        mask_keep = ~(mask_filtered & ~mask_has_class2)
+
+        df_valid = df_subset.loc[mask_keep]
+        # 把gt_labels设为label2
+        gt_labels = df_valid["class_gt"].where(
+            df_valid["class_gt"] != filtered_label_evaluation,
+            df_valid["class2_gt"]
+        ).values
+
+    prediction_labels = df_valid["class"].values
+    if "class2" in df_valid.columns:
+        prediction_labels2=df_valid["class2"].values
+        no_prediction_class2=0
+    else :
+        no_prediction_class2=1
+
+    # 考虑多标签评估label1, label2
+    gt2 = df_valid["class2_gt"].values if "class2_gt" in df_valid.columns else None
+    strict_acc,acc_nogt2,accgt2 = compute_strict_accuracy(gt_labels, gt2,prediction_labels)
+    tolerant_acc,tolacc_gt2 = compute_tolerant_accuracy(gt_labels, gt2, prediction_labels)
+    soft_acc = compute_soft_accuracy(gt_labels, gt2, prediction_labels, w_secondary=0.5)
+
+    metrics['strict_acc'] = round(strict_acc, 4)
+    metrics['acc_nogt2'] = round(acc_nogt2, 4)
+    metrics['acc_gt2']   = round(accgt2, 4)
+    metrics['tolerant_acc'] = round(tolerant_acc, 4)
+    metrics['tolerant_acc_gt2'] = round(tolacc_gt2, 4)
+    metrics['soft_acc'] = round(soft_acc, 4)
+
+    if not no_prediction_class2:
+
+        top2_all, top2_nogt2, top2_gt2= compute_top2acc(gt_labels, gt2, prediction_labels,prediction_labels2)
+
+        metrics['top2_acc_all'] = round(top2_all, 4)
+        metrics['top2_acc_nogt2'] = round(top2_nogt2, 4)
+        metrics['top2_acc_gt2'] = round(top2_gt2, 4)
+
+    # 整体评估
+    from sklearn.utils.multiclass import unique_labels
+    labels_in_subset = unique_labels(gt_labels, prediction_labels)
+    labels_classes = [ground_classes_names[int(i)] for i in labels_in_subset]
+
+    evaluate_subset(name, gt_labels, prediction_labels, labels_classes, metrics, os.path.join(evaluation_path,name))
+
+
 
 
 def evaluate_subset(name, subset_gt, subset_pred,ground_classes_names,metrics,confusion_matrix_savepath):
@@ -168,38 +171,21 @@ def evaluate_subset(name, subset_gt, subset_pred,ground_classes_names,metrics,co
     print('Micro f1-score', metrics_local['micro_f1'])
 
     print("\n===== Custom Accuracy Metrics =====")
-    print("Strict Accuracy (label1 only):      ", metrics['strict_acc'] )
-    print("Tolerant Accuracy (label1 or 2):    ", metrics['tolerant_acc'])
+    print("Strict Accuracy (label1 only)all samples:      ", metrics['strict_acc'] )
+    print("Strict Accuracy no gt2 samples:      ", metrics['acc_nogt2'])
+    print("Strict Accuracy with gt2 samples:      ", metrics['acc_gt2'])
+    print("Tolerant Accuracy (label1 or 2) all samples:    ", metrics['tolerant_acc'])
+    print("Tolerant Accuracy (label1 or 2) with gt2 samples:    ", metrics['tolerant_acc_gt2'])
     print("Soft Accuracy (label1=1, label2=0.5):", metrics['soft_acc'])
 
 
+    print("Top-2 Accuracy all samples:      ", metrics['top2_acc_all'])
+    print("Top-2 Accuracy without gt2 samples:      ", metrics['top2_acc_nogt2'])
+    print("Top-2 Accuracy with gt2 samples:      ", metrics['top2_acc_gt2'])
 
 
-    ######## 不同accuracy指标分析(多预测，多label)top1-accuracy_label1,top2-accuracy-label1,top1-accuracy-label2,top2-accuracy_label2,top1-accuracy_deuxlabel,top2-accuracy-deuxlabel
-    # gt_labels2 = np.array([
-    #     df.loc[img, "class2"] if pd.notna(df.loc[img, "class2"])
-    #     else df.loc[img, "class"]
-    #     for img in test_image_names
-    # ])
-    #
-    # prediction_labels2 = df_prediction["class2"].values
-    # top2_correct = (gt_labels == prediction_labels) | (gt_labels == prediction_labels2)
-    # top2_acc = np.mean(top2_correct)
-    # print("------Top-k Accuracy------")
-    # print(f"Top-1 Accuracy: {np.mean(gt_labels == prediction_labels):.4f}")
-    # print(f"Top-2 Accuracy: {top2_acc:.4f}")
-    # print("------2em label------")
-    # top2_correct = (gt_labels2 == prediction_labels) | (gt_labels2 == prediction_labels2)
-    # top2_acc = np.mean(top2_correct)
-    # print(f"Top-1 Accuracy: {np.mean(gt_labels2 == prediction_labels):.4f}")
-    # print(f"Top-2 Accuracy: {top2_acc:.4f}")
-    #
-    # print("------Multi label(2 classes)------")
-    # top_acc_multilabel = (gt_labels == prediction_labels) | (gt_labels2 == prediction_labels)
-    # print(f"Top-1 Accuracy: {np.mean(top_acc_multilabel):.4f}")
-    #
-    # top2_acc_multilabel = (gt_labels == prediction_labels) | (gt_labels2 == prediction_labels)|(gt_labels == prediction_labels2) | (gt_labels2 == prediction_labels2)
-    # print(f"Top-2 Accuracy: {np.mean(top2_acc_multilabel):.4f}")
+
+
 
     ev_utils.save_results(
         metrics,
@@ -208,17 +194,39 @@ def evaluate_subset(name, subset_gt, subset_pred,ground_classes_names,metrics,co
     )
 
 
-def compute_strict_accuracy(gt1, pred):
-    return (pred == gt1).mean()
+def compute_strict_accuracy(gt1, gt2,pred):
+    correct_all_samples = (pred == gt1)
+    if gt2 is not None:
+        gt2_valid = ~pd.isna(gt2)
+        acc_nogt2 = (pred[~gt2_valid] == gt1[~gt2_valid]).mean()
+        acc_gt2 = (pred[gt2_valid] == gt1[gt2_valid]).mean()
+        return correct_all_samples.mean(),acc_nogt2,acc_gt2
+    else:
+        return correct_all_samples.mean(),-1,-1
 
 
 def compute_tolerant_accuracy(gt1, gt2, pred):
     if gt2 is None:
-        return (pred == gt1).mean()
+        return -1,-1
 
     gt2_valid = ~pd.isna(gt2)
     correct = (pred == gt1) | (gt2_valid & (pred == gt2))
-    return correct.mean()
+    correct_gt2= correct[gt2_valid]
+    return correct.mean(),correct_gt2.mean()
+
+def compute_top2acc(gt, gt2,pred, pred2):
+    top2_all = (gt == pred) | (gt == pred2)
+    if gt2 is not None:
+        gt2_valid = ~pd.isna(gt2)
+        # no gt2 subset
+        top2_nogt2 = top2_all[~gt2_valid].mean() if (~gt2_valid).sum() > 0 else np.nan
+        # gt2 subset
+        top2_gt2 = top2_all[gt2_valid].mean() if gt2_valid.sum() > 0 else np.nan
+
+        return top2_all.mean(), top2_nogt2, top2_gt2
+    else:
+        return top2_all.mean(),-1,-1
+
 
 
 def compute_soft_accuracy(gt1, gt2, pred, w_secondary=0.5):

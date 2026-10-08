@@ -43,6 +43,15 @@ def save_results(
     json_dict["strict_acc"] = metrics["strict_acc"]
     json_dict["tolerant_acc"] = metrics["tolerant_acc"]
     json_dict["soft_acc"] = metrics["soft_acc"]
+    json_dict["acc_nogt2"]= metrics['acc_nogt2']
+    json_dict["acc_gt2"]=metrics['acc_gt2']
+    json_dict["tolerant_acc_gt2"]=metrics['tolerant_acc_gt2']
+    json_dict["top2_acc_all"] = metrics["top2_acc_all"]
+    json_dict["top2_acc_nogt2"] = metrics["top2_acc_nogt2"]
+    json_dict["top2_acc_gt2"] = metrics["top2_acc_gt2"]
+
+
+
 
 
 
@@ -118,18 +127,6 @@ def plot_confusion_matrix(cm_list, type_list, ground_classes_names, evaluation_p
 
         plt.close()
 
-
-# def plot_confusion_matrix(cm_list,type_list, ground_classes_names, evaluation_path):
-#     for index,cm in enumerate(cm_list):
-#         type=type_list[index]
-#
-#         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=ground_classes_names)
-#         disp.plot(cmap=plt.cm.Blues, xticks_rotation=45)
-#
-#         plt.title("Confusion Matrix")
-#         save_path = os.path.join(evaluation_path, f"confusion_matrix_{type}.png")
-#         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-#         # plt.show()
 
 
 
