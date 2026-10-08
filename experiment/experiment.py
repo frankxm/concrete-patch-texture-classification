@@ -3,10 +3,7 @@ import json
 import logging
 import os
 import random
-
-
 import cv2
-
 import numpy as np
 import torch
 from torch.cuda.amp import GradScaler
@@ -14,11 +11,8 @@ from torch.optim import Adam,AdamW
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
-
 import model
-
 from evaluate import run as evaluate
-
 from predict import run as predict
 from training import run as train
 from doc_functions import DLACollateFunction,DLACollateFunction_for_prediction, Sampler,DLACollateFunction_multimodal
@@ -33,17 +27,13 @@ from preprocessing import (
 from training_utils import SoftLabelLoss
 import pandas as pd
 logger = logging.getLogger(__name__)
-
 from sklearn.ensemble import RandomForestClassifier
-
 from sklearn.neighbors import KNeighborsClassifier
 import joblib
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from sklearn.metrics import accuracy_score
-import visualize_features
 import re
-from sklearn.model_selection import GridSearchCV, StratifiedKFold,StratifiedGroupKFold,RandomizedSearchCV
+from sklearn.model_selection import GridSearchCV,StratifiedGroupKFold,RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -849,16 +839,13 @@ def get_optimizer_with_layerwise_lr_midfusion(
     other_decay = []
     other_no_decay = []
 
-    # ========================================================
     # EfficientFormer 的所有参数身份
-    # ========================================================
     backbone_params = set(
         id(p) for p in net.efficientformer.parameters()
     )
 
-    # ========================================================
+
     # 遍历所有 trainable parameters
-    # ========================================================
     for name, param in net.named_parameters():
 
         if not param.requires_grad:
@@ -888,9 +875,8 @@ def get_optimizer_with_layerwise_lr_midfusion(
             else:
                 other_decay.append(param)
 
-    # ========================================================
+
     # Parameter groups
-    # ========================================================
     param_groups = [
         # 其他 MidFusion 模块：大 LR
         {
@@ -1199,13 +1185,11 @@ def run_experiment(config: dict, num_workers: int ):
                 config["log_path"],
                 config["tb_path"],
                 config["no_of_epochs"],
-                norm_params,
                 config["classes_names"],
                 loaders,
                 tr_params,
                 config["batch_size"],
                 config["desired_batchsize"],
-                config["learning_rate"],
                 config["use_gpu"],
                 config["model_name"]
             )

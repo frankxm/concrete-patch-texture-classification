@@ -8,9 +8,8 @@ import time
 
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
 from torch.cuda.amp import autocast
-from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR, SequentialLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -41,161 +40,14 @@ def log_metrics(epoch: int, metrics: dict, writer,learning_rate, step: str):
         # 记录学习率
         writer.add_scalar(f"{step_name}_learning_rate", learning_rate, epoch)
         logging.info("  {} {}: learning_rate={}".format(step_name, epoch, round(learning_rate, 6)))
-#
-# def run_one_epoch(
-#     loader,
-#     params: dict,
-#     writer,
-#     epochs: list,
-#     no_of_epochs: int,
-#     device: str,
-#     norm_params: dict,
-#     classes_names: list,
-#     batchsize:int,
-#     desired_batch_size:int,
-#     logpath,
-#     model_name,
-#     step: str,
-#
-#
-#
-# ):
-#     # 一轮的全局指标
-#     metrics = init_metrics(len(classes_names))
-#     epoch = epochs[0]
-#
-#     total_steps = len(loader)
-#     t = tqdm(loader, total=total_steps)
-#     step_name = "TRAIN" if step == "Training" else "VALID"
-#     t.set_description(
-#         "{} (prog) {}/{} batchsize:{}".format(step_name, epoch, no_of_epochs + epochs[1], batchsize)
-#     )
-#
-#     accumulation_steps = desired_batch_size // batchsize
-#     # 梯度裁剪的最大范数
-#     max_grad_norm = 1.0
-#     # 初始化累积步数计数器
-#     accumulation_counter = 0
-#
-#     num_samples_until_this_batch=0
-#
-#     log_path = os.path.join(logpath,"gate_scale_log.txt")
-#     log_interval = 50  # 每50 step记录一次
-#     epoch_gate_list = []
-#     epoch_scale_list = []
-#     for index, data in enumerate(t, 1):
-#         with autocast(enabled=params["use_amp"]):
-#             # 训练不能用这个，同步操作，会阻塞cpu，降低cpu速度，拖慢训练
-#             # torch.cuda.empty_cache()
-#             if params["use_amp"]:
-#                 if model_name=='midfusionmodel':
-#                     output  = params["net"](data["image"].to(device).half(),data["texture"].to(device).half())
-#
-#                 else:
-#                     output = params["net"](data["image"].to(device).half())
-#             else:
-#                 if model_name=='midfusionmodel':
-#                     output = params["net"](data["image"].to(device).float(),data["texture"].to(device).float())
-#                 else:
-#                     output = params["net"](data["image"].to(device).float())
-#
-#         if step == "Training":
-#             # if model_name == 'midfusionmodel':
-#             #     index += 1
-#             #     gate_mean = gate.mean().item()
-#             #     scale_val = scale.item()
-#             #     epoch_gate_list.append(gate_mean)
-#             #     epoch_scale_list.append(scale_val)
-#             #     if index % log_interval == 0:
-#             #         with open(log_path, "a") as f:
-#             #             f.write(
-#             #                 f"training epoch {epoch}, step {index}, "
-#             #                 f"gate_mean {gate_mean:.6f}, scale {scale_val:.6f}\n"
-#             #             )
-#             loss = params["criterion"](output, data["label"].to(device))
-#         else:
-#             loss = params["criterion_val"](output, data["label"].to(device))
-#
-#
-#
-#         original_loss = loss
-#         if step =="Training":
-#             # 梯度累计：将损失缩小 当前 mini-batch 的 loss 除以累计步数，这是为了模拟在每个大 batch 下的平均梯度更新。
-#             loss = loss / accumulation_steps
-#             params["scaler"].scale(loss).backward()
-#             accumulation_counter += 1
-#
-#         batchsize=output.shape[0]
-#         num_samples_until_this_batch+=batchsize
-#         # 计算和更新指标,更新指标以原batchsize为准
-#         for pred in range(output.shape[0]):
-#             current_pred = output[pred, :].argmax().item()
-#             # 使用 .item() 转换为标量
-#             current_label = data["label"][pred].item()
-#
-#             batch_metrics = p_metrics.compute_metrics(
-#                 current_pred, current_label, original_loss.item(), classes_names
-#             )
-#             metrics = p_metrics.update_metrics(metrics, batch_metrics, pred,batchsize)
-#
-#         # 如果达到累计步数，执行梯度更新
-#         if accumulation_counter % accumulation_steps == 0:
-#             if step == "Training":
-#                 # 梯度裁剪
-#                 params["scaler"].unscale_(params["optimizer"])
-#                 torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
-#                 # 更新参数
-#                 params["scaler"].step(params["optimizer"])
-#                 params["scaler"].update()
-#                 # 清零梯度
-#                 params["optimizer"].zero_grad()
-#                 logging.info(f"Terminer les {accumulation_counter} tours de gradient d'accumulation")
-#
-#             # 重置累积步数计数器
-#             accumulation_counter = 0
-#         # 计算到目前批次为止的指标以及loss 一轮的loss整体上是所有批次loss相加除以批次数 对于第n个批次来说loss就是loss_sum/n(老法
-#         # 新法：计算total sample loss。 一轮的loss是所有sample的loss和除以sample数，防止最后一个batch不满batchsize的情况下，造成最后一个batch权重比正常batch高，所以最终loss偏高不稳定
-#         epoch_values = tr_utils.get_epoch_values(metrics, classes_names,num_samples_until_this_batch)
-#         display_values = epoch_values
-#         display_values["loss"] = round(display_values["loss"], 4)
-#         t.set_postfix(values=str(display_values))
-#
-#
-#     # 最后一次梯度更新，防止没有被 accumulation_steps 整除的情况
-#     if accumulation_counter != 0:
-#         if step == "Training":
-#             # 梯度裁剪
-#             params["scaler"].unscale_(params["optimizer"])
-#             torch.nn.utils.clip_grad_norm_(params["net"].parameters(), max_grad_norm)
-#             # 更新参数
-#             params["scaler"].step(params["optimizer"])
-#             params["scaler"].update()
-#             params["optimizer"].zero_grad()
-#             logging.info(f"Terminer les {accumulation_counter} tours restants de gradient d'accumulation")
-#
-#     if step == "Training":
-#         # if model_name == 'midfusionmodel' and len(epoch_gate_list) > 0:
-#         #     epoch_gate_mean = sum(epoch_gate_list) / len(epoch_gate_list)
-#         #     epoch_scale_mean = sum(epoch_scale_list) / len(epoch_scale_list)
-#         #
-#         #     with open(log_path, "a") as f:
-#         #         f.write(
-#         #             f"[Training Epoch {epoch} Summary] "
-#         #             f"gate_mean {epoch_gate_mean:.6f}, "
-#         #             f"scale_mean {epoch_scale_mean:.6f}\n"+"\n"
-#         #         )
-#         return params, epoch_values
-#     else:
-#         return epoch_values
+
 #
 def run_one_epoch(
     loader,
     params: dict,
-    writer,
     epochs: list,
     no_of_epochs: int,
     device: str,
-    norm_params: dict,
     classes_names: list,
     batchsize:int,
     desired_batch_size:int,
@@ -517,66 +369,17 @@ def run_one_epoch(
 #         return epoch_values
 
 
-#   模型微调情况下初始学习率大概在1e-3 ~  1e-5
-def find_lr(train_dataloader,tr_params,device,batchsize,init_value = 1e-4, final_value=1, beta = 0.98):
-    optimizer=tr_params["optimizer"]
-
-    lr = init_value
-    optimizer.param_groups[0]['lr'] = lr
-    avg_loss = 0.
-    best_loss = float('inf')
-    batch_num = 0
-    losses = []
-    original_losses=[]
-    log_lrs = []
-    total_steps = math.ceil(len(train_dataloader) / batchsize )
-    t = tqdm(train_dataloader, total=total_steps)
-    mult = (final_value / init_value) ** (1.0 / total_steps)
-    tr_params["net"].train()
-    for data in t:
-        batch_num += 1
-
-        optimizer.zero_grad()
-        gc.collect()
-        torch.cuda.empty_cache()
-        output = tr_params["net"](data["image"].to(device).float())
-        loss = tr_params["criterion"](output, data["label"].to(device))
-        #通过指数加权平均计算平滑后的损失值 smoothed_loss，使得损失曲线更平滑，减少噪声的影响
-        avg_loss = beta * avg_loss + (1-beta) *loss.item()
-        smoothed_loss = avg_loss / (1 - beta**batch_num)
-        original_loss=loss.item()
-
-        #如果当前平滑损失突然增长超过之前最低损失的4倍，则停止学习率搜索，认为损失发生了爆炸，返回当前的学习率和损失记录。
-        if batch_num > 1 and smoothed_loss > 4 * best_loss:
-            return log_lrs, losses,original_losses
-
-        if smoothed_loss < best_loss or batch_num==1:
-            best_loss = smoothed_loss
-
-        losses.append(smoothed_loss)
-        log_lrs.append(math.log10(lr))
-        original_losses.append(original_loss)
-        loss.backward()
-        optimizer.step()
-
-        lr *= mult
-
-        optimizer.param_groups[0]['lr'] = lr
-    return log_lrs, losses,original_losses
-
 
 def run(
     model_path: str,
     log_path: str,
     tb_path: str,
     no_of_epochs: int,
-    norm_params: dict,
     classes_names: list,
     loaders: dict,
     tr_params: dict,
     batchsize:int,
     desired_batchsize:int,
-    learning_rate,
     use_gpu,
     model_name
 ):
@@ -633,24 +436,6 @@ def run(
 
 
 
-    # logs, losses,original_losses = find_lr(loaders["train"],tr_params,device,batchsize)
-    # min_idx = losses.index(min(losses))
-    # print(f"最小loss出现在log10(lr)={logs[min_idx]}, lr={10 ** logs[min_idx]}")
-    #
-    # plt.figure(1, figsize=(20, 10))
-    # plt.plot(logs, losses)
-    # plt.xlabel('log10(lr) lr')
-    # plt.ylabel('smoothloss')
-    # plt.title(f'batchsize:{batchsize} loss change avec log10(lr)')
-    #
-    # plt.savefig(f'{batchsize}-smoothloss.png')
-    # plt.figure(2, figsize=(20, 10))
-    # plt.plot(logs, original_losses)
-    # plt.xlabel('log10(lr) lr')
-    # plt.ylabel('originalloss')
-    # plt.title(f'batchsize:{batchsize} loss change avec log10(lr)')
-    # plt.savefig(f'{batchsize}-originalloss.png')
-    # # plt.show()
 
     # controller = TrainingPhaseController(tr_params["net"])
 
@@ -671,11 +456,9 @@ def run(
         tr_params, epoch_values = run_one_epoch(
             loaders["train"],
             tr_params,
-            writer,
             [current_epoch, tr_params["saved_epoch"]],
             no_of_epochs,
             device,
-            norm_params["train"],
             classes_names,
             batchsize,
             desired_batchsize,
@@ -684,12 +467,12 @@ def run(
             step="Training",
 
         )
-
+        current_lr = tr_params["optimizer"].param_groups[0]["lr"]
         log_metrics(
             epoch=current_epoch,
             metrics=epoch_values,
             writer=writer,
-            learning_rate=learning_rate,
+            learning_rate=current_lr,
             step="Training",
         )
 
@@ -699,11 +482,9 @@ def run(
             epoch_values = run_one_epoch(
                 loaders["val"],
                 tr_params,
-                writer,
                 [current_epoch, tr_params["saved_epoch"]],
                 no_of_epochs,
                 device,
-                norm_params['train'],
                 classes_names,
                 batchsize,
                 desired_batchsize,
@@ -711,25 +492,29 @@ def run(
                 model_name,
                 step="Validation",
             )
+            current_lr = tr_params["optimizer"].param_groups[0]["lr"]
             log_metrics(
                 current_epoch,
                 epoch_values,
                 writer,
-                learning_rate,
+                current_lr,
                 step="Validation",
             )
             # 尝试：学习率固定衰减
             #  lr_ = base_lr * (1.0 - iter_num / max_iterations) ** 0.9
-
             # param_groups[0]表示第一个参数组，若没具体设定则为全局学习率，否则为第一个参数组的学习率，一般把第一个参数组设为分类头
-            learning_rate_before = tr_params["optimizer"].param_groups[0]['lr']
+            # learning_rate_before = tr_params["optimizer"].param_groups[0]['lr']
             # 更新学习率调度器
             plateau_scheduler.step(epoch_values["loss"])
 
             # # 更新学习率
             # scheduler.step()
-            learning_rate = tr_params["optimizer"].param_groups[0]['lr']
-            logging.info(f"Learning rate now is {learning_rate}")
+            new_lr = tr_params["optimizer"].param_groups[0]["lr"]
+            if new_lr != current_lr:
+                logging.info(
+                    f"Learning rate changed: "
+                    f"{current_lr:.2e} -> {new_lr:.2e}"
+                )
 
             # if learning_rate<=0.0001:
             #     controller.unfreez_all()

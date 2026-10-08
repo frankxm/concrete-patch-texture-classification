@@ -44,7 +44,7 @@ def confusion_matrix(pred, label, classes: list) -> np.array:
     return confusion_matrix
 
 
-def iou(confusion_matrix: np.ndarray, channel: str) -> float:
+def compute_confusion_metrics_epoch(confusion_matrix: np.ndarray, channel: str) -> float:
 
     TP = confusion_matrix[channel, channel]
     # 漏检+TP

@@ -6,44 +6,42 @@
 
     Generic functions used during all the steps.
 """
+import math
 
-import copy
-import pywt
+import numpy as np
 import torch
 import logging
 import config
 config_dict = config.__dict__
-from lbp_tools import *
-from glcm_tools import *
 from preprocessing import get_texture
 
-def create_buckets(images_sizes, bin_size):
-    """
-    Group images into same size buckets.
-    :param images_sizes: The sizes of the images.
-    :param bin_size: The step between two buckets.
-    :return bucket: The images indices grouped by size.
-    """
-
-    max_size = max([image_size for image_size in images_sizes.values()])
-    min_size = min([image_size for image_size in images_sizes.values()])
-    # binsize为每个桶的尺寸范围，先创建空桶，每个桶的最大尺寸作为键
-    bucket = {}
-    current = min_size + bin_size - 1
-    while current < max_size:
-        bucket[current] = []
-        current += bin_size
-    bucket[max_size] = []
-    # 遍历图像尺寸分配到特定桶
-    for index, value in images_sizes.items():
-        # 计算当前尺寸所属的桶的区域，计算上限
-        dict_index = (((value - min_size) // bin_size) + 1) * bin_size + min_size - 1
-        bucket[min(dict_index, max_size)].append(index)
-    # 删除空桶，只保留有图像的桶
-    bucket = {
-        dict_index: values for dict_index, values in bucket.items() if len(values) > 0
-    }
-    return bucket
+# def create_buckets(images_sizes, bin_size):
+#     """
+#     Group images into same size buckets.
+#     :param images_sizes: The sizes of the images.
+#     :param bin_size: The step between two buckets.
+#     :return bucket: The images indices grouped by size.
+#     """
+#
+#     max_size = max([image_size for image_size in images_sizes.values()])
+#     min_size = min([image_size for image_size in images_sizes.values()])
+#     # binsize为每个桶的尺寸范围，先创建空桶，每个桶的最大尺寸作为键
+#     bucket = {}
+#     current = min_size + bin_size - 1
+#     while current < max_size:
+#         bucket[current] = []
+#         current += bin_size
+#     bucket[max_size] = []
+#     # 遍历图像尺寸分配到特定桶
+#     for index, value in images_sizes.items():
+#         # 计算当前尺寸所属的桶的区域，计算上限
+#         dict_index = (((value - min_size) // bin_size) + 1) * bin_size + min_size - 1
+#         bucket[min(dict_index, max_size)].append(index)
+#     # 删除空桶，只保留有图像的桶
+#     bucket = {
+#         dict_index: values for dict_index, values in bucket.items() if len(values) > 0
+#     }
+#     return bucket
 #
 # class Sampler(torch.utils.data.Sampler):
 #     def __init__(self, data, batch_size,no_of_epochs,israndom,generator):
@@ -156,50 +154,23 @@ class Sampler(torch.utils.data.Sampler):
 
     def __iter__(self):
 
-        logging.info(
-            f"real images in train:{len(self.real_indices)}"
-        ) if self.israndom else logging.info(
-            f"real images in valid:{len(self.real_indices)}"
-        )
+        logging.info(f"real images in train:{len(self.real_indices)}") if self.israndom else logging.info( f"real images in valid:{len(self.real_indices)}")
 
 
         # 1. 随机打乱所有 index
+        shuffled_indices = torch.randperm( len(self.real_indices),generator=self.generator).tolist()
 
-        shuffled_indices = torch.randperm(
-            len(self.real_indices),
-            generator=self.generator
-        ).tolist()
-
-        indices = [
-            self.real_indices[i]
-            for i in shuffled_indices
-        ]
-
+        indices = [ self.real_indices[i] for i in shuffled_indices]
 
         # 2. 按 batch_size 切分
 
-        final_indices = [
-            indices[i:i + self.batch_size]
-            for i in range(
-                0,
-                len(indices),
-                self.batch_size
-            )
-        ]
+        final_indices = [indices[i:i + self.batch_size] for i in range( 0,  len(indices), self.batch_size)]
 
         # 3. 只删除 batch size = 1 的情况≥2 的不完整 batch 保留
-
-        final_indices = [
-            batch
-            for batch in final_indices
-            if len(batch) > 1
-        ]
+        final_indices = [batch for batch in final_indices if len(batch) > 1]
 
         #  打乱 batch 的顺序
-        batch_order = torch.randperm(
-            len(final_indices),
-            generator=self.generator
-        ).tolist()
+        batch_order = torch.randperm(len(final_indices),generator=self.generator).tolist()
 
         final_indices = [
             final_indices[i]
@@ -267,13 +238,6 @@ class DLACollateFunction:
         if self.model_name=='texture_model' :
             X =get_texture(image, **config_dict)
             X_scaled = (X - self.mean_features) / self.std_features
-            # mean_check = X_scaled.mean(axis=0)
-            # std_check = X_scaled.std(axis=0)
-            #
-            # print("每个特征的均值 (应该接近 0):", mean_check)
-            # print("每个特征的标准差 (应该接近 1):", std_check)
-
-            # X_unsqueezed=torch.tensor(X_scaled).unsqueeze(0).unsqueeze(0)
             X_unsqueezed = torch.from_numpy(
                 X_scaled.astype(np.float32, copy=False)
             ).unsqueeze(0).unsqueeze(0)
@@ -310,13 +274,6 @@ class DLACollateFunction_for_prediction:
             image_normalized = [item["image"] for item in batch]
             X= get_texture(image, **config_dict)
             X_scaled = (X - self.mean_features) / self.std_features
-            # X_unsqueezed = torch.tensor(X_scaled).unsqueeze(0).unsqueeze(0)
-            #
-            # return {
-            # "texture": torch.tensor(X_unsqueezed).permute(2, 0, 3, 1),
-            # "name":name,
-            # "image": torch.tensor(image_normalized).permute(0, 3, 1, 2),
-            # }
             X_unsqueezed = torch.from_numpy(
                 X_scaled.astype(np.float32, copy=False)
             ).unsqueeze(0).unsqueeze(0)
@@ -333,11 +290,6 @@ class DLACollateFunction_for_prediction:
             name = [item["name"] for item in batch]
             X = get_texture(image, **config_dict)
             X_scaled = (X - self.mean_features) / self.std_features
-            # X_unsqueezed = torch.tensor(X_scaled).unsqueeze(0).unsqueeze(0)
-            # return {
-            #     "image": torch.tensor(X_unsqueezed).permute(2, 0, 3, 1),
-            #     "name": name,
-            # }
             texture = torch.from_numpy(
                 X_scaled.astype(np.float32, copy=False)
             ).unsqueeze(0).unsqueeze(0).permute(2, 0, 3, 1)
@@ -366,7 +318,7 @@ class DLACollateFunction_multimodal:
         image_normalized = [item["image"] for item in batch]
         X= get_texture(image, **config_dict)
         X_scaled = (X - self.mean_features) / self.std_features
-        # X_unsqueezed = torch.tensor(X_scaled).unsqueeze(0).unsqueeze(0)
+
         texture = torch.from_numpy(
             X_scaled.astype(np.float32, copy=False)
         ).unsqueeze(0).unsqueeze(0).permute(2, 0, 3, 1)
@@ -388,10 +340,4 @@ class DLACollateFunction_multimodal:
             "label_extra": label_extra_tensor,
             "image": image_tensor,
         }
-        # return {
-        #     "texture": torch.tensor(X_unsqueezed).permute(2, 0, 3, 1),
-        #     "label": torch.tensor(mask),
-        #     "label_extra": torch.tensor(mask_extra),
-        #     "image": torch.tensor(image_normalized).permute(0, 3, 1, 2),
-        # }
 

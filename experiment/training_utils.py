@@ -6,9 +6,7 @@
 
     Use it to during the training stage.
 """
-import os.path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import training_pixel_metrics as p_metrics
 
@@ -124,7 +122,7 @@ def get_epoch_values(metrics: dict, classes: list, num_samples_until_this_batch:
     total_tp=0
     total_samples=0
     for channel in classes:
-        recall, precision, f1 = p_metrics.iou(metrics["matrix"], classes.index(channel))
+        recall, precision, f1 = p_metrics.compute_confusion_metrics_epoch(metrics["matrix"], classes.index(channel))
         values["recall_" + channel] = round(recall, 4)
         values["precision_" + channel] = round(precision, 4)
         values["f1_" + channel] = round(f1, 4)

@@ -42,11 +42,6 @@ filtered_label_evaluation
 
     cols_to_join = [c for c in ["class", "class2","vue","qualite"] if c in df.columns]
 
-    # df_all = df_pred.join(
-    #     df[cols_to_join],
-    #     how="inner",
-    #     rsuffix="_gt"
-    # )
     df_all = df_pred.join(
         df[cols_to_join].add_suffix("_gt"),
         how="inner"
